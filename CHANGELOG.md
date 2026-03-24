@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.25.5](https://github.com/Viren070/AIOStreams/compare/v2.25.4...v2.25.5) (2026-03-24)
+
+
+### Features
+
+* **core/formatter:** add subtitle fields ([03df4ba](https://github.com/Viren070/AIOStreams/commit/03df4ba03ec2e1a192d0865bc299685641c1c3a9))
+* **core/formatters:** support variable resolution in replace() first argument ([#793](https://github.com/Viren070/AIOStreams/issues/793)) ([0de87f1](https://github.com/Viren070/AIOStreams/commit/0de87f13f42f959cf41665a3406f8fab9707758c))
+* parse media info from stremthru ([03df4ba](https://github.com/Viren070/AIOStreams/commit/03df4ba03ec2e1a192d0865bc299685641c1c3a9)), closes [#235](https://github.com/Viren070/AIOStreams/issues/235)
+* **sel:** add `subtitle()` function and `subtitle` `perGroup()` attributem, ([03df4ba](https://github.com/Viren070/AIOStreams/commit/03df4ba03ec2e1a192d0865bc299685641c1c3a9))
+
+
+### Bug Fixes
+
+* **presets/meteor:** include source, seeders, and audiolang in format config ([e818475](https://github.com/Viren070/AIOStreams/commit/e81847536d50d522531194ca04f3d7ae983e0037))
+* **presets/streamnzb:** make everything cached, show availability via message ([#828](https://github.com/Viren070/AIOStreams/issues/828)) ([830e915](https://github.com/Viren070/AIOStreams/commit/830e9152a3d166ed03256913a41c82b85205a797))
+
 ## [2.25.4](https://github.com/Viren070/AIOStreams/compare/v2.25.3...v2.25.4) (2026-03-12)
 
 
