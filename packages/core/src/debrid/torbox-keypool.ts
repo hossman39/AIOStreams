@@ -122,6 +122,9 @@ class TorboxKeyPool {
 // Singleton instances keyed by the raw credential string
 const instances = new Map<string, TorboxKeyPool>();
 
+// Reverse lookup: individual key -> raw credential string that contains it
+const keyToRawCredential = new Map<string, string>();
+
 export function getKeyPool(rawCredential: string): TorboxKeyPool | null {
   if (!rawCredential || !rawCredential.includes(',')) {
     return null;
@@ -134,9 +137,21 @@ export function getKeyPool(rawCredential: string): TorboxKeyPool | null {
       .filter((k) => k.length > 0);
     if (keys.length < 2) return null;
     instances.set(rawCredential, new TorboxKeyPool(keys));
+    // Register each individual key for reverse lookup
+    for (const key of keys) {
+      keyToRawCredential.set(key, rawCredential);
+    }
   }
 
   return instances.get(rawCredential)!;
+}
+
+/**
+ * Given an individual key that belongs to a pool, returns the raw
+ * comma-separated credential string so a fresh key can be selected.
+ */
+export function getRawCredentialForKey(singleKey: string): string | null {
+  return keyToRawCredential.get(singleKey) ?? null;
 }
 
 export function selectKeyFromPool(rawCredential: string): string {

@@ -40,6 +40,7 @@ import {
   getTimeTakenSincePoint,
   RequestOptions,
 } from './utils/index.js';
+import { selectKeyFromPool, getRawCredentialForKey } from './debrid/torbox-keypool.js';
 import { Preset, PresetManager } from './presets/index.js';
 import { z } from 'zod';
 
@@ -594,7 +595,122 @@ export class Wrapper {
   ): string {
     const extrasPath = extras ? `/${extras}` : '';
     const queryParams = new URL(this.manifestUrl).search;
-    return `${this.baseUrl}/${resource}/${type}/${encodeURIComponent(id)}${extrasPath}.json${queryParams ? `?${queryParams.slice(1)}` : ''}`;
+    const baseUrl = this.getRotatedBaseUrl();
+    return `${baseUrl}/${resource}/${type}/${encodeURIComponent(id)}${extrasPath}.json${queryParams ? `?${queryParams.slice(1)}` : ''}`;
+  }
+
+  /**
+   * Returns baseUrl with the torbox API key rotated if this addon uses
+   * a multi-key pool. This ensures each stream request can use a different
+   * key rather than always reusing the one baked in at config-generation time.
+   */
+  private getRotatedBaseUrl(): string {
+    try {
+      const urlObj = new URL(this.baseUrl);
+      const pathParts = urlObj.pathname.split('/').filter((p) => p.length > 0);
+
+      for (let i = 0; i < pathParts.length; i++) {
+        const segment = pathParts[i];
+        // Skip segments too short to be a base64-encoded config
+        if (segment.length < 20) continue;
+
+        const decoded = this.tryDecodeBase64Json(segment);
+        if (decoded === null) continue;
+
+        const config = JSON.parse(decoded);
+        let modified = false;
+
+        // Comet format: { debridServices: [{ service: "torbox", apiKey: "KEY" }] }
+        if (Array.isArray(config.debridServices)) {
+          for (const svc of config.debridServices) {
+            if (svc.service === 'torbox' && svc.apiKey) {
+              const rawCredential = getRawCredentialForKey(svc.apiKey);
+              if (rawCredential) {
+                const newKey = selectKeyFromPool(rawCredential);
+                if (newKey !== svc.apiKey) {
+                  svc.apiKey = newKey;
+                  modified = true;
+                }
+              }
+            }
+          }
+        }
+
+        // StremThru Torz format: { stores: [{ c: "tb", t: "KEY" }] }
+        if (Array.isArray(config.stores)) {
+          for (const store of config.stores) {
+            if (store.c === 'tb' && store.t) {
+              const rawCredential = getRawCredentialForKey(store.t);
+              if (rawCredential) {
+                const newKey = selectKeyFromPool(rawCredential);
+                if (newKey !== store.t) {
+                  store.t = newKey;
+                  modified = true;
+                }
+              }
+            }
+          }
+        }
+
+        if (modified) {
+          // Re-encode using the same encoding as the original segment
+          const newSegment = Buffer.from(JSON.stringify(config)).toString(
+            'base64'
+          );
+          pathParts[i] = newSegment;
+          urlObj.pathname = '/' + pathParts.join('/');
+          return urlObj.toString();
+        }
+      }
+
+      // Also handle Torbox addon format: raw API key as a path segment
+      // URL: https://host/{apiKey}/manifest.json -> baseUrl is https://host/{apiKey}
+      // The key is the last path segment in baseUrl
+      if (pathParts.length > 0) {
+        const lastSegment = pathParts[pathParts.length - 1];
+        const rawCredential = getRawCredentialForKey(lastSegment);
+        if (rawCredential) {
+          const newKey = selectKeyFromPool(rawCredential);
+          if (newKey !== lastSegment) {
+            pathParts[pathParts.length - 1] = newKey;
+            urlObj.pathname = '/' + pathParts.join('/');
+            return urlObj.toString();
+          }
+        }
+      }
+    } catch {
+      // If anything fails, silently return the original baseUrl
+    }
+    return this.baseUrl;
+  }
+
+  /**
+   * Attempts to decode a URL path segment as base64-encoded JSON.
+   * Tries standard base64 first, then URL-safe base64.
+   * Returns the decoded string if valid JSON, or null otherwise.
+   */
+  private tryDecodeBase64Json(segment: string): string | null {
+    // Try standard base64 first
+    try {
+      const decoded = Buffer.from(segment, 'base64').toString('utf-8');
+      JSON.parse(decoded);
+      return decoded;
+    } catch {
+      // ignore
+    }
+    // Try URL-safe base64
+    try {
+      const padding = 4 - (segment.length % 4);
+      const padded = padding !== 4 ? segment + '='.repeat(padding) : segment;
+      const decoded = Buffer.from(
+        padded.replace(/-/g, '+').replace(/_/g, '/'),
+        'base64'
+      ).toString('utf-8');
+      JSON.parse(decoded);
+      return decoded;
+    } catch {
+      return null;
+    }
   }
 
   private getAddonName(addon: Addon): string {
