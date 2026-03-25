@@ -182,14 +182,33 @@ export function getRawCredentialForKey(singleKey: string): string | null {
   return keyToRawCredential.get(singleKey) ?? null;
 }
 
+// Cache the last selection to deduplicate calls within the same stream request.
+// Multiple addons (Comet, Torz, NZBHydra) all call selectKeyFromPool within
+// milliseconds — they should all get the same key and only count as one usage.
+const selectionCache = new Map<string, { key: string; expiresAt: number }>();
+const SELECTION_CACHE_TTL_MS = 2000; // 2 seconds
+
 /**
  * Select a key from the pool. Records usage and logs pool status.
- * Called once per user stream request.
+ * Within a 2-second window, returns the same key to ensure all addons
+ * in a single stream request use the same key and count as one usage.
  */
 export function selectKeyFromPool(rawCredential: string): string {
   const pool = getKeyPool(rawCredential);
   if (!pool) return rawCredential;
-  return pool.selectKey();
+
+  const now = Date.now();
+  const cached = selectionCache.get(rawCredential);
+  if (cached && now < cached.expiresAt) {
+    return cached.key;
+  }
+
+  const key = pool.selectKey();
+  selectionCache.set(rawCredential, {
+    key,
+    expiresAt: now + SELECTION_CACHE_TTL_MS,
+  });
+  return key;
 }
 
 export function recordPoolError(
