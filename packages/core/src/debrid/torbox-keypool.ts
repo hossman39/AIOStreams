@@ -61,7 +61,14 @@ class TorboxKeyPool {
       }
     }
 
-    if (best) return best.key;
+    if (best) {
+      // Record usage immediately so the next call picks a different key
+      best.usageTimes.push(now);
+      logger.info(
+        `Selected key: ${maskKey(best.key)} (usage: ${bestUsage}, total keys: ${this.keys.length})`
+      );
+      return best.key;
+    }
 
     // All keys unhealthy - use the one that errored longest ago
     let oldest: PoolKeyState | null = null;
