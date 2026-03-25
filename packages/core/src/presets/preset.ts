@@ -9,6 +9,7 @@ import {
 } from '../db/index.js';
 import { StreamParser } from '../parser/index.js';
 import { Env, ServiceId, constants, toUrlSafeBase64 } from '../utils/index.js';
+import { selectKeyFromPool } from '../debrid/torbox-keypool.js';
 /**
  *
  * What modifications are needed for each preset:
@@ -274,6 +275,10 @@ export abstract class Preset {
       throw new Error(
         `Missing credentials for ${serviceId}. Please add an API key.`
       );
+    }
+    // If this is torbox and the key contains commas, select from the pool
+    if (serviceId === 'torbox' && apiKey.includes(',')) {
+      return selectKeyFromPool(apiKey);
     }
     return apiKey;
   }

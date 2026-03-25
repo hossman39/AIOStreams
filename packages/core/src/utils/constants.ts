@@ -409,9 +409,9 @@ const SERVICE_DETAILS: Record<
     credentials: [
       {
         id: 'apiKey',
-        name: 'API Key',
+        name: 'API Key(s)',
         description:
-          'Your Torbox API key. Obtain it from [here](https://torbox.app/settings)',
+          'Your Torbox API key(s). For multiple keys, separate with commas. Keys will be load-balanced automatically. Obtain keys from [here](https://torbox.app/settings)',
         type: 'password',
         required: true,
       },

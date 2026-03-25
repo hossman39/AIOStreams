@@ -4,6 +4,7 @@ export * from './stremthru.js';
 export * from './torbox.js';
 export * from './nzbdav.js';
 export * from './altmount.js';
+export { getKeyPool, selectKeyFromPool, recordPoolUsage, recordPoolError } from './torbox-keypool.js';
 
 import {
   Env,
