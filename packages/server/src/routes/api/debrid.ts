@@ -24,7 +24,6 @@ import {
   isNzbRetryableError,
   DistributedLock,
   type NzbFallback,
-  recordPoolUsage,
   recordPoolError,
   getRawCredentialForKey,
 } from '@aiostreams/core';
@@ -265,16 +264,6 @@ router.get(
             { error: err?.message }
           );
         });
-      }
-
-      // Track pool usage/errors for torbox key rotation
-      if (storeAuth.id === 'torbox') {
-        const rawCred = getRawCredentialForKey(storeAuth.credential);
-        if (rawCred) {
-          if (streamUrl) {
-            recordPoolUsage(rawCred, storeAuth.credential);
-          }
-        }
       }
 
       if (resolveError) {

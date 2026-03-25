@@ -34,6 +34,10 @@ class TorboxKeyPool {
     logger.info(`Key pool initialized with ${this.keys.length} keys`);
   }
 
+  /**
+   * Select the best key and record usage. Called once per user stream request.
+   * Usage is tracked against the Torbox rolling 60-min / 10-per-min limits.
+   */
   selectKey(): string {
     const now = Date.now();
 
@@ -57,7 +61,9 @@ class TorboxKeyPool {
 
     if (healthyKeys.length > 0) {
       // Find the minimum usage among healthy keys
-      const minUsage = Math.min(...healthyKeys.map((k) => k.usageTimes.length));
+      const minUsage = Math.min(
+        ...healthyKeys.map((k) => k.usageTimes.length)
+      );
       const candidates = healthyKeys.filter(
         (k) => k.usageTimes.length === minUsage
       );
@@ -65,6 +71,13 @@ class TorboxKeyPool {
       // Among tied candidates, round-robin
       const pick = candidates[this.roundRobinIndex % candidates.length];
       this.roundRobinIndex = (this.roundRobinIndex + 1) % this.keys.length;
+
+      // Record usage immediately
+      pick.usageTimes.push(now);
+
+      // Log the pool status
+      logger.info(this.formatPoolStatus(now, pick.key));
+
       return pick.key;
     }
 
@@ -78,21 +91,12 @@ class TorboxKeyPool {
 
     if (oldest) {
       logger.warn(
-        `All keys unhealthy, using oldest errored: ${maskKey(oldest.key)}`
+        `All keys unhealthy, using oldest errored\n${this.formatPoolStatus(Date.now(), oldest.key)}`
       );
       return oldest.key;
     }
 
     return this.keys[0].key;
-  }
-
-  recordUsage(apiKey: string): void {
-    const k = this.keys.find((k) => k.key === apiKey);
-    if (k) {
-      const now = Date.now();
-      k.usageTimes.push(now);
-      logger.info(`Link generated\n${this.formatPoolStatus(now, apiKey)}`);
-    }
   }
 
   recordError(apiKey: string, statusCode: number): void {
@@ -107,7 +111,9 @@ class TorboxKeyPool {
       return;
     }
     k.lastErrorAt = Date.now();
-    logger.warn(`Key marked ${k.health}: ${maskKey(k.key)} (HTTP ${statusCode})`);
+    logger.warn(
+      `Key marked ${k.health}: ${maskKey(k.key)} (HTTP ${statusCode})\n${this.formatPoolStatus(Date.now(), k.key)}`
+    );
   }
 
   hasKey(apiKey: string): boolean {
@@ -128,8 +134,10 @@ class TorboxKeyPool {
       const edgeUsage = k.usageTimes.filter((t) => t > edgeCutoff).length;
       const hourFill = Math.round((hourUsage / HOURLY_LIMIT) * barLen);
       const edgeFill = Math.round((edgeUsage / EDGE_LIMIT) * barLen);
-      const hourBar = '\u2588'.repeat(hourFill) + '\u2591'.repeat(barLen - hourFill);
-      const edgeBar = '\u2588'.repeat(edgeFill) + '\u2591'.repeat(barLen - edgeFill);
+      const hourBar =
+        '\u2588'.repeat(hourFill) + '\u2591'.repeat(barLen - hourFill);
+      const edgeBar =
+        '\u2588'.repeat(edgeFill) + '\u2591'.repeat(barLen - edgeFill);
       const marker = k.key === selectedKey ? '>' : ' ';
       const health = k.health !== 'healthy' ? ` [${k.health}]` : '';
       return `${marker}${maskKey(k.key)} 1h:${hourBar} ${hourUsage}/${HOURLY_LIMIT} | 1m:${edgeBar} ${edgeUsage}/${EDGE_LIMIT}${health}`;
@@ -174,18 +182,14 @@ export function getRawCredentialForKey(singleKey: string): string | null {
   return keyToRawCredential.get(singleKey) ?? null;
 }
 
+/**
+ * Select a key from the pool. Records usage and logs pool status.
+ * Called once per user stream request.
+ */
 export function selectKeyFromPool(rawCredential: string): string {
   const pool = getKeyPool(rawCredential);
   if (!pool) return rawCredential;
   return pool.selectKey();
-}
-
-export function recordPoolUsage(
-  rawCredential: string,
-  usedKey: string
-): void {
-  const pool = getKeyPool(rawCredential);
-  if (pool) pool.recordUsage(usedKey);
 }
 
 export function recordPoolError(

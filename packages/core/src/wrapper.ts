@@ -115,6 +115,7 @@ export class Wrapper {
   private readonly addon: Addon;
   private readonly manifestUrl: string;
   private readonly preset: typeof Preset;
+  private rotatedBaseUrl: string | null = null;
 
   constructor(addon: Addon) {
     this.addon = addon;
@@ -232,6 +233,9 @@ export class Wrapper {
   }
 
   async getStreams(type: string, id: string): Promise<ParsedStream[]> {
+    // Select a fresh key for this stream request (one key per request)
+    this.rotatedBaseUrl = this.getRotatedBaseUrl();
+
     const validator = (data: any): Stream[] => {
       return this.validateArray(data.streams, StreamSchema, 'streams');
     };
@@ -595,7 +599,7 @@ export class Wrapper {
   ): string {
     const extrasPath = extras ? `/${extras}` : '';
     const queryParams = new URL(this.manifestUrl).search;
-    const baseUrl = this.getRotatedBaseUrl();
+    const baseUrl = this.rotatedBaseUrl ?? this.baseUrl;
     return `${baseUrl}/${resource}/${type}/${encodeURIComponent(id)}${extrasPath}.json${queryParams ? `?${queryParams.slice(1)}` : ''}`;
   }
 
