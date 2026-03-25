@@ -22,6 +22,7 @@ function maskKey(key: string): string {
 
 class TorboxKeyPool {
   private keys: PoolKeyState[];
+  private roundRobinIndex: number = 0;
 
   constructor(apiKeys: string[]) {
     this.keys = apiKeys.map((key) => ({
@@ -36,39 +37,35 @@ class TorboxKeyPool {
   selectKey(): string {
     const now = Date.now();
 
-    // Try to find the healthy key with lowest rolling usage
-    let best: PoolKeyState | null = null;
-    let bestUsage = Infinity;
-
+    // Prune old usage times and recover unhealthy keys
+    const healthyKeys: PoolKeyState[] = [];
+    const hourCutoff = now - ROLLING_WINDOW_MS;
     for (const k of this.keys) {
+      k.usageTimes = k.usageTimes.filter((t) => t > hourCutoff);
       if (k.health !== 'healthy') {
-        // Auto-recover after timeout
         if (now - k.lastErrorAt >= RECOVERY_TIMEOUT_MS) {
           logger.info(
             `Key auto-recovered: ${maskKey(k.key)} (was ${k.health})`
           );
           k.health = 'healthy';
-        } else {
-          continue;
+          healthyKeys.push(k);
         }
-      }
-
-      // Count usage in rolling window
-      const cutoff = now - ROLLING_WINDOW_MS;
-      k.usageTimes = k.usageTimes.filter((t) => t > cutoff);
-      const usage = k.usageTimes.length;
-
-      if (best === null || usage < bestUsage) {
-        best = k;
-        bestUsage = usage;
+      } else {
+        healthyKeys.push(k);
       }
     }
 
-    if (best) {
-      // Record usage immediately so the next call picks a different key
-      best.usageTimes.push(now);
-      logger.info(this.formatPoolStatus(now, best.key));
-      return best.key;
+    if (healthyKeys.length > 0) {
+      // Find the minimum usage among healthy keys
+      const minUsage = Math.min(...healthyKeys.map((k) => k.usageTimes.length));
+      const candidates = healthyKeys.filter(
+        (k) => k.usageTimes.length === minUsage
+      );
+
+      // Among tied candidates, round-robin
+      const pick = candidates[this.roundRobinIndex % candidates.length];
+      this.roundRobinIndex = (this.roundRobinIndex + 1) % this.keys.length;
+      return pick.key;
     }
 
     // All keys unhealthy - use the one that errored longest ago
@@ -92,7 +89,9 @@ class TorboxKeyPool {
   recordUsage(apiKey: string): void {
     const k = this.keys.find((k) => k.key === apiKey);
     if (k) {
-      k.usageTimes.push(Date.now());
+      const now = Date.now();
+      k.usageTimes.push(now);
+      logger.info(`Link generated\n${this.formatPoolStatus(now, apiKey)}`);
     }
   }
 

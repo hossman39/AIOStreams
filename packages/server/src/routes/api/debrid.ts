@@ -24,6 +24,9 @@ import {
   isNzbRetryableError,
   DistributedLock,
   type NzbFallback,
+  recordPoolUsage,
+  recordPoolError,
+  getRawCredentialForKey,
 } from '@aiostreams/core';
 import { ZodError } from 'zod';
 import { StaticFiles } from '../../app.js';
@@ -264,9 +267,25 @@ router.get(
         });
       }
 
+      // Track pool usage/errors for torbox key rotation
+      if (storeAuth.id === 'torbox') {
+        const rawCred = getRawCredentialForKey(storeAuth.credential);
+        if (rawCred) {
+          if (streamUrl) {
+            recordPoolUsage(rawCred, storeAuth.credential);
+          }
+        }
+      }
+
       if (resolveError) {
         let staticFile: string = StaticFiles.INTERNAL_SERVER_ERROR;
         if (resolveError instanceof DebridError) {
+          if (storeAuth.id === 'torbox') {
+            const rawCred = getRawCredentialForKey(storeAuth.credential);
+            if (rawCred && resolveError.statusCode) {
+              recordPoolError(rawCred, storeAuth.credential, resolveError.statusCode);
+            }
+          }
           logger.error(
             `[${storeAuth.id}] Got Debrid error during debrid resolve: ${resolveError.code}: ${resolveError.message}`,
             { ...resolveError, stack: undefined }
