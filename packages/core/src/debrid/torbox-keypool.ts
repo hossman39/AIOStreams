@@ -10,7 +10,10 @@ interface PoolKeyState {
 }
 
 const ROLLING_WINDOW_MS = 60 * 60 * 1000; // 60 minutes
+const EDGE_WINDOW_MS = 60 * 1000; // 1 minute (10/min edge limit)
 const RECOVERY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const HOURLY_LIMIT = 60;
+const EDGE_LIMIT = 10;
 
 function maskKey(key: string): string {
   if (key.length <= 8) return '***';
@@ -64,9 +67,7 @@ class TorboxKeyPool {
     if (best) {
       // Record usage immediately so the next call picks a different key
       best.usageTimes.push(now);
-      logger.info(
-        `Selected key: ${maskKey(best.key)} (usage: ${bestUsage}, total keys: ${this.keys.length})`
-      );
+      logger.info(this.formatPoolStatus(now, best.key));
       return best.key;
     }
 
@@ -116,6 +117,26 @@ class TorboxKeyPool {
 
   getKeyCount(): number {
     return this.keys.length;
+  }
+
+  private formatPoolStatus(now: number, selectedKey: string): string {
+    const edgeCutoff = now - EDGE_WINDOW_MS;
+    const hourCutoff = now - ROLLING_WINDOW_MS;
+    const barLen = 10;
+
+    const keyStats = this.keys.map((k) => {
+      const hourUsage = k.usageTimes.filter((t) => t > hourCutoff).length;
+      const edgeUsage = k.usageTimes.filter((t) => t > edgeCutoff).length;
+      const hourFill = Math.round((hourUsage / HOURLY_LIMIT) * barLen);
+      const edgeFill = Math.round((edgeUsage / EDGE_LIMIT) * barLen);
+      const hourBar = '\u2588'.repeat(hourFill) + '\u2591'.repeat(barLen - hourFill);
+      const edgeBar = '\u2588'.repeat(edgeFill) + '\u2591'.repeat(barLen - edgeFill);
+      const marker = k.key === selectedKey ? '>' : ' ';
+      const health = k.health !== 'healthy' ? ` [${k.health}]` : '';
+      return `${marker}${maskKey(k.key)} 1h:${hourBar} ${hourUsage}/${HOURLY_LIMIT} | 1m:${edgeBar} ${edgeUsage}/${EDGE_LIMIT}${health}`;
+    });
+
+    return `Selected: ${maskKey(selectedKey)}\n` + keyStats.join('\n');
   }
 }
 
