@@ -35,8 +35,8 @@ class TorboxKeyPool {
   }
 
   /**
-   * Select the best key and record usage. Called once per user stream request.
-   * Usage is tracked against the Torbox rolling 60-min / 10-per-min limits.
+   * Select the best key. Called once per user stream request.
+   * Usage is only recorded later when Torbox API is actually hit (resolve phase).
    */
   selectKey(): string {
     const now = Date.now();
@@ -72,10 +72,7 @@ class TorboxKeyPool {
       const pick = candidates[this.roundRobinIndex % candidates.length];
       this.roundRobinIndex = (this.roundRobinIndex + 1) % this.keys.length;
 
-      // Record usage immediately
-      pick.usageTimes.push(now);
-
-      // Log the pool status
+      // Log the pool status (usage is recorded later via recordUsage)
       logger.info(this.formatPoolStatus(now, pick.key));
 
       return pick.key;
@@ -114,6 +111,13 @@ class TorboxKeyPool {
     logger.warn(
       `Key marked ${k.health}: ${maskKey(k.key)} (HTTP ${statusCode})\n${this.formatPoolStatus(Date.now(), k.key)}`
     );
+  }
+
+  recordUsage(apiKey: string): void {
+    const k = this.keys.find((k) => k.key === apiKey);
+    if (!k) return;
+    k.usageTimes.push(Date.now());
+    logger.info(`API hit recorded for ${maskKey(apiKey)}\n${this.formatPoolStatus(Date.now(), apiKey)}`);
   }
 
   hasKey(apiKey: string): boolean {
@@ -209,6 +213,14 @@ export function selectKeyFromPool(rawCredential: string): string {
     expiresAt: now + SELECTION_CACHE_TTL_MS,
   });
   return key;
+}
+
+export function recordPoolUsage(
+  rawCredential: string,
+  usedKey: string
+): void {
+  const pool = getKeyPool(rawCredential);
+  if (pool) pool.recordUsage(usedKey);
 }
 
 export function recordPoolError(
