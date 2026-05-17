@@ -3,7 +3,8 @@ import { useStatus } from '@/context/status';
 import { PageWrapper } from '../shared/page-wrapper';
 import { useState, useEffect } from 'react';
 import * as constants from '../../../../core/src/utils/constants';
-import { useUserData } from '@/context/userData';
+import { useUserData, useParentInheritance } from '@/context/userData';
+import { InheritedBadge } from '../shared/inherited-badge';
 import { Switch } from '../ui/switch';
 import { Select } from '../ui/select';
 import { Combobox } from '../ui/combobox';
@@ -41,6 +42,7 @@ function Content() {
   const { status } = useStatus();
   const { userData, setUserData } = useUserData();
   const { mode } = useMode();
+  const { isInherited, hasParent } = useParentInheritance();
   const details = constants.PROXY_SERVICE_DETAILS;
 
   // Effect to initialize values from userData/defaults/forced
@@ -92,7 +94,10 @@ function Content() {
     <>
       <div className="flex items-center w-full">
         <div>
-          <h2>Proxy</h2>
+          <div className="flex items-center gap-2">
+            <h2>Proxy</h2>
+            {hasParent && isInherited('proxy') && <InheritedBadge section="proxy" />}
+          </div>
           <p className="text-[--muted]">
             Configure a proxy for your streams to bypass IP restrictions or
             improve compatibility
@@ -183,13 +188,13 @@ function Content() {
                     ? 'stremthru:8080'
                     : 'mediaflow-proxy:8888'
                   : 'mediaflow-proxy:8888'}
-                 as the URL above but then using https://
+                as the URL above but then using https://
                 {userData.proxy?.id
                   ? userData.proxy.id === 'stremthru'
                     ? 'stremthru.yourdomain.com'
                     : 'mediaflow-proxy.yourdomain.com'
                   : 'mediaflow-proxy.yourdomain.com'}
-                 as the public URL.
+                as the public URL.
               </p>
             </div>
           )}

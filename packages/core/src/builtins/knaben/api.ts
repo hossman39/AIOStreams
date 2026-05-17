@@ -47,7 +47,7 @@ const KnabenSearchHitSchema = z.looseObject({
   title: z.string(),
   tracker: z.string(),
   trackerId: z.string(),
-  virusDetection: z.number().min(0).max(1),
+  virusDetection: z.number(),
 });
 
 type KnabenSearchHit = z.infer<typeof KnabenSearchHitSchema>;

@@ -566,10 +566,17 @@ const TemplateOption: React.FC<TemplateOptionProps> = ({
     case 'subsection': {
       const [modalOpen, setModalOpen] = useState(false);
       const subOptions = (option.subOptions ?? []) as Option[];
-      const currentValue = (forcedValue ??
+      const savedValue = (forcedValue ??
         value ??
         defaultValue ??
         {}) as Record<string, any>;
+      const subDefaults: Record<string, any> = {};
+      for (const sub of subOptions) {
+        if (sub.default !== undefined) {
+          subDefaults[sub.id] = sub.default;
+        }
+      }
+      const currentValue = { ...subDefaults, ...savedValue };
 
       const [localValue, setLocalValue] =
         useState<Record<string, any>>(currentValue);
@@ -678,7 +685,7 @@ const encodeServers = (servers: NNTPServers): string | undefined => {
   return Buffer.from(JSON.stringify(servers)).toString('base64');
 };
 
-interface NNTPServersInputProps {
+export interface NNTPServersInputProps {
   name: string;
   description?: string;
   value: string | undefined;
@@ -686,7 +693,7 @@ interface NNTPServersInputProps {
   disabled?: boolean;
 }
 
-function NNTPServersInput({
+export function NNTPServersInput({
   name,
   description,
   value,

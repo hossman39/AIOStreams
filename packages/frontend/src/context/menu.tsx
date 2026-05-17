@@ -1,23 +1,21 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+} from 'react';
 import { useMode } from './mode';
+import { MENU_IDS, type MenuId } from '../../../core/src/utils/fieldMeta';
+import { useOptions } from './options';
 
-const VALID_MENUS = [
-  'about',
-  'services',
-  'addons',
-  'filters',
-  'sorting',
-  'formatter',
-  'proxy',
-  'miscellaneous',
-  'save-install',
-];
+const VALID_MENUS = MENU_IDS;
 
-const PRO_ONLY_MENUS = ['sorting'];
+const PRO_ONLY_MENUS: MenuId[] = ['sorting'];
 
-export type MenuId = (typeof VALID_MENUS)[number];
+export type { MenuId };
 
 type MenuContextType = {
   selectedMenu: MenuId;
@@ -39,29 +37,28 @@ const MenuContext = createContext<MenuContextType>({
 
 export function MenuProvider({ children }: { children: React.ReactNode }) {
   const { mode } = useMode();
-  const menus = [
-    'about',
-    'services',
-    'addons',
-    'filters',
-    'sorting',
-    'formatter',
-    'proxy',
-    'miscellaneous',
-    'save-install',
-  ].filter((menu) => {
+
+  const { isOptionsEnabled } = useOptions();
+
+  const menus = useMemo(() => {
+    let availableMenus = VALID_MENUS as readonly MenuId[];
     if (mode === 'noob') {
-      return !PRO_ONLY_MENUS.includes(menu);
+      availableMenus = availableMenus.filter(
+        (menu) => !PRO_ONLY_MENUS.includes(menu)
+      );
     }
-    return true;
-  });
+    if (!isOptionsEnabled) {
+      availableMenus = availableMenus.filter((menu) => menu !== 'fun');
+    }
+    return availableMenus;
+  }, [mode, isOptionsEnabled]);
 
   // Get initial menu from URL or default to 'about'
   const initialMenu = (() => {
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
       const menu = url.searchParams.get('menu');
-      if (menu && menus.includes(menu)) {
+      if (menu && (menus as string[]).includes(menu)) {
         return menu as MenuId;
       }
     }

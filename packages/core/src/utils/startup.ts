@@ -355,12 +355,16 @@ const logStartupInfo = () => {
   // Blocked Items
   const blockedHosts = parseBlockedItems(Env.DISABLED_HOSTS);
   const blockedAddons = parseBlockedItems(Env.DISABLED_ADDONS);
+  const removedAddons = parseBlockedItems(Env.REMOVED_ADDONS);
   const blockedServices = parseBlockedItems(Env.DISABLED_SERVICES);
+  const disabledStreamTypes = Env.DISABLED_STREAM_TYPES ?? [];
 
   if (
     blockedHosts.length > 0 ||
     blockedAddons.length > 0 ||
-    blockedServices.length > 0
+    removedAddons.length > 0 ||
+    blockedServices.length > 0 ||
+    disabledStreamTypes.length > 0
   ) {
     logSection('BLOCKED ITEMS', '🚫', () => {
       if (blockedHosts.length > 0) {
@@ -381,6 +385,15 @@ const logStartupInfo = () => {
         logKeyValue('Blocked Addons:', '❌ None');
       }
 
+      if (removedAddons.length > 0) {
+        logKeyValue('Removed Addons:', `${removedAddons.length} items`);
+        removedAddons.forEach(({ name, reason }) => {
+          logKeyValue(`  → ${name}:`, reason, '       ');
+        });
+      } else {
+        logKeyValue('Removed Addons:', '❌ None');
+      }
+
       if (blockedServices.length > 0) {
         logKeyValue('Blocked Services:', `${blockedServices.length} items`);
         blockedServices.forEach(({ name, reason }) => {
@@ -388,6 +401,12 @@ const logStartupInfo = () => {
         });
       } else {
         logKeyValue('Blocked Services:', '❌ None');
+      }
+
+      if (disabledStreamTypes.length > 0) {
+        logKeyValue('Disabled Stream Types:', disabledStreamTypes.join(', '));
+      } else {
+        logKeyValue('Disabled Stream Types:', '❌ None');
       }
     });
   }
@@ -847,7 +866,7 @@ const logStartupInfo = () => {
     }
 
     // Torrentio
-    logKeyValue('Torrentio:', Env.TORRENTIO_URL);
+    logKeyValue('Torrentio:', Env.TORRENTIO_URL.join(', '));
     if (Env.DEFAULT_TORRENTIO_TIMEOUT) {
       logKeyValue(
         '  Timeout:',
@@ -1125,6 +1144,28 @@ const logStartupInfo = () => {
         Env.DEFAULT_STREAMFUSION_USER_AGENT,
         '     '
       );
+    }
+
+    logKeyValue('Baguettio:', Env.BAGUETTIO_URL);
+    if (Env.DEFAULT_BAGUETTIO_TIMEOUT) {
+      logKeyValue(
+        '  Timeout:',
+        formatMilliseconds(Env.DEFAULT_BAGUETTIO_TIMEOUT),
+        '     '
+      );
+    }
+
+    // HdHub
+    logKeyValue('HdHub:', Env.HDHUB_URL);
+    if (Env.DEFAULT_HDHUB_TIMEOUT) {
+      logKeyValue(
+        '  Timeout:',
+        formatMilliseconds(Env.DEFAULT_HDHUB_TIMEOUT),
+        '     '
+      );
+    }
+    if (Env.DEFAULT_HDHUB_USER_AGENT) {
+      logKeyValue('  User Agent:', Env.DEFAULT_HDHUB_USER_AGENT, '     ');
     }
 
     // DMM Cast (Note: no URL env var, only timeout and user agent)
@@ -1464,6 +1505,19 @@ const logStartupInfo = () => {
     logKeyValue('  User Agent:', Env.DEFAULT_AI_SEARCH_USER_AGENT, '     ');
   }
 
+  // Flix-Streams
+  logKeyValue('Flix-Streams:', Env.FLIX_STREAMS_URL);
+  if (Env.DEFAULT_FLIX_STREAMS_TIMEOUT) {
+    logKeyValue(
+      '  Timeout:',
+      formatMilliseconds(Env.DEFAULT_FLIX_STREAMS_TIMEOUT),
+      '     '
+    );
+  }
+  if (Env.DEFAULT_FLIX_STREAMS_USER_AGENT) {
+    logKeyValue('  User Agent:', Env.DEFAULT_FLIX_STREAMS_USER_AGENT, '     ');
+  }
+
   // FKStream
   logKeyValue('FKStream:', Env.FKSTREAM_URL);
   if (Env.DEFAULT_FKSTREAM_TIMEOUT) {
@@ -1501,6 +1555,19 @@ const logStartupInfo = () => {
   }
   if (Env.DEFAULT_SUBHERO_USER_AGENT) {
     logKeyValue('  User Agent:', Env.DEFAULT_SUBHERO_USER_AGENT, '     ');
+  }
+
+  // yastream
+  logKeyValue('yastream:', Env.YASTREAM_URL);
+  if (Env.DEFAULT_YASTREAM_TIMEOUT) {
+    logKeyValue(
+      '  Timeout:',
+      formatMilliseconds(Env.DEFAULT_YASTREAM_TIMEOUT),
+      '     '
+    );
+  }
+  if (Env.DEFAULT_YASTREAM_USER_AGENT) {
+    logKeyValue('  User Agent:', Env.DEFAULT_YASTREAM_USER_AGENT, '     ');
   }
 
   // StreamAsia

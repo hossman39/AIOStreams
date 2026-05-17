@@ -15,7 +15,11 @@ const nextConfig: NextConfig = {
       fs: false,
       './ptt.js': './ptt',
       './regex.js': './regex',
+      './languages.js': './languages',
+      './language-list.js': './language-list',
       '../utils/languages.js': '../utils/languages',
+      '../utils/language-list.js': '../utils/language-list',
+      './constants.js': './constants',
       '../utils/constants.js': '../utils/constants',
     };
     return config;
@@ -25,7 +29,11 @@ const nextConfig: NextConfig = {
     resolveAlias: {
       // 'fs': false,
       './regex.js': `${pathToCoreFromFrontend}/parser/regex`,
+      './languages.js': `${pathToCoreFromFrontend}/utils/languages`,
+      './language-list.js': `${pathToCoreFromFrontend}/utils/language-list`,
       '../utils/languages.js': `${pathToCoreFromFrontend}/utils/languages`,
+      '../utils/language-list.js': `${pathToCoreFromFrontend}/utils/language-list`,
+      './constants.js': `${pathToCoreFromFrontend}/utils/constants`,
       '../utils/constants.js': `${pathToCoreFromFrontend}/utils/constants`,
     },
   },

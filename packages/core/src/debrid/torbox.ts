@@ -75,9 +75,16 @@ function convertTorBoxError(error: any): DebridError {
         code = 'TOO_MANY_REQUESTS';
         break;
     }
-    if (error.message.includes('429') || error.message.includes('rate limit')) {
+    if (error.message.includes('rate limit')) {
       code = 'TOO_MANY_REQUESTS';
       message = 'Too many requests - rate limit exceeded';
+    }
+
+    if (code === 'UNKNOWN') {
+      logger.warn(`Could not parse unknown error from Torbox API`, {
+        message: error.message,
+        error: JSON.stringify(error),
+      });
     }
 
     return new DebridError(message, {
@@ -374,7 +381,13 @@ export class TorboxDebridService
         eta: usenetDownload.eta,
         active: usenetDownload.active,
       });
-      if (usenetDownload.downloadFinished && usenetDownload.downloadPresent) {
+      if (
+        usenetDownload.downloadFinished &&
+        (usenetDownload.downloadPresent ||
+          usenetDownload.downloadState
+            ?.toLowerCase()
+            .startsWith('direct unpack: completed'))
+      ) {
         status = 'downloaded';
       } else if (
         usenetDownload.progress &&

@@ -526,6 +526,35 @@ seadex(streams, 'best')
 
 ---
 
+#### `keyword()` / `keywords()`
+
+Filter streams by one or more keywords. Uses the same matching logic as the Keyword UI filters (Required / Excluded / Included / Preferred Keywords): keywords are escaped and joined into a single case-insensitive regex with the same word-boundary heuristics. You explicitly choose which stream attribute(s) the keywords are tested against.
+
+Useful when you want fine-grained keyword filtering inside an SEL expression (e.g. inside a group, ranked stream expression, or precompute selector) without affecting the global keyword filters.
+
+| Parameter     | Type             | Description                                                                                                                                  |
+| ------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `streams`     | `ParsedStream[]` | Stream list                                                                                                                                  |
+| `attributes`  | `string`         | Comma-separated attribute names that the keywords should be tested against. Use `'all'` or `'*'` to match every attribute. Case-insensitive. |
+| `...keywords` | `string`         | One or more keyword strings. Whitespace inside a keyword matches separators like `.`, `_`, `-`.                                              |
+
+**Accepted attribute names:** `filename`, `folderName`, `indexer`, `releaseGroup` — the same set the Keyword UI filters check.
+
+```
+keyword(streams, 'filename', 'remux')                      // match 'remux' only in filenames
+keyword(streams, 'filename,releaseGroup', 'flux', 'ntb')   // multiple attributes, multiple keywords
+keywords(streams, 'all', 'extended cut')                   // match every attribute (= UI keyword filter behavior)
+keyword(streams, '*', 'remux')                             // shorthand for 'all'
+```
+
+To exclude streams matching the keywords, combine with [`negate()`](#negate):
+
+```
+negate(keyword(streams, 'all', 'cam', 'hdcam'), streams)
+```
+
+---
+
 #### `regexMatched()`
 
 Filter for streams that matched a preferred or ranked regex filter.
@@ -648,7 +677,7 @@ When used in an **Excluded Stream Expression**: flagged streams won't be removed
 | `streams`   | `ParsedStream[]` | Stream list                                |
 | `...stages` | `string?`        | Stages to skip. Omit to bypass all stages. |
 
-**Accepted stage values:** `filter` `language` `dedup` `limit` `excluded` `required` `title` `year` `episode` `digitalRelease`
+**Accepted stage values:** `filter` `language` `subtitle` `dedup` `limit` `excluded` `required` `title` `year` `episode` `digitalRelease`
 
 ```
 passthrough(streams, 'language', 'limit')

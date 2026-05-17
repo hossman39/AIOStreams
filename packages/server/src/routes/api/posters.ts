@@ -18,10 +18,11 @@ const searchParams = z.object({
   fallback: z.string().optional(),
   apiKey: z.string(),
   profileId: z.string().optional(),
+  baseUrl: z.string().optional(),
 });
 
 interface PosterServiceParams {
-  service: string
+  service: string;
 }
 /**
  * Combined poster redirect handler.
@@ -30,7 +31,11 @@ interface PosterServiceParams {
  */
 router.get(
   '/:service',
-  async (req: Request<PosterServiceParams>, res: Response, next: NextFunction) => {
+  async (
+    req: Request<PosterServiceParams>,
+    res: Response,
+    next: NextFunction
+  ) => {
     try {
       const { success, data, error } = searchParams.safeParse(req.query);
       if (!success) {
@@ -47,11 +52,12 @@ router.get(
         return;
       }
 
-      const { id, type, fallback, apiKey, profileId } = data;
+      const { id, type, fallback, apiKey, profileId, baseUrl } = data;
       const service = req.params.service;
 
       const posterService = createPosterServiceFromParams(service, apiKey, {
         profileId: profileId || 'default',
+        ...(baseUrl ? { baseUrl } : {}),
       });
 
       if (!posterService) {

@@ -25,23 +25,27 @@ import {
   FaEdit,
   FaUndo,
   FaChevronDown,
+  FaMapPin,
 } from 'react-icons/fa';
 
 // Helpers
 
-/**
- * Extract ALL names from block comments, including #-prefixed ones.
- * Used for override tracking to make each expression's name unique.
- */
-function extractAllNamesFromExpression(
-  expression: string
+function extractNamesFromExpression(
+  expression: string,
+  ignoreHashPrefixed = true
 ): string[] | undefined {
   const regex = /\/\*\s*(.*?)\s*\*\//g;
   const names: string[] = [];
   let match;
   while ((match = regex.exec(expression)) !== null) {
     const content = match[1];
-    names.push(content.startsWith('#') ? content.slice(1).trim() : content);
+    if (content.startsWith('#')) {
+      if (!ignoreHashPrefixed) {
+        names.push(content.slice(1).trim());
+      }
+    } else {
+      names.push(content);
+    }
   }
   return names.length > 0 ? names : undefined;
 }
@@ -62,6 +66,9 @@ export interface SyncConfig {
   onUrlsChange: (urls: string[]) => void;
   trusted?: boolean;
   syncMode?: SyncMode;
+  onInsertPlaceholder?: (url: string) => void;
+  onRemovePlaceholder?: (url: string) => void;
+  hasPlaceholder?: (url: string) => boolean;
 }
 
 interface SyncedPatternValue {
@@ -162,7 +169,7 @@ export function SyncedPatterns({
 
         // For SEL items, extract names from expression comments
         const extractedNames = isSel
-          ? extractAllNamesFromExpression(patternStr)
+          ? extractNamesFromExpression(patternStr, false)
           : undefined;
 
         const matchesOverride = (o: any) => {
@@ -822,6 +829,11 @@ export function SyncedUrlInputs({
   };
 
   const handleUrlsUpdate = (newUrls: string[]) => {
+    // When a URL is removed, also remove its inline placeholder
+    const removedUrls = urls.filter((u) => !newUrls.includes(u));
+    for (const removedUrl of removedUrls) {
+      syncConfig.onRemovePlaceholder?.(removedUrl);
+    }
     onUrlsChange(newUrls);
   };
 
@@ -854,41 +866,70 @@ export function SyncedUrlInputs({
             {urls.map((url) => {
               const urlState = fetchedData[url];
               return (
-                <Disclosure key={url} type="single" collapsible>
-                  <DisclosureItem value="items">
-                    <div className="flex items-center gap-2 p-2 px-3 text-sm">
-                      <DisclosureTrigger>
-                        <button
-                          type="button"
-                          className="group flex items-center"
-                        >
-                          <FaChevronDown className="text-[10px] text-[--muted] transition-transform duration-200 group-data-[state=open]:rotate-180" />
-                        </button>
-                      </DisclosureTrigger>
-                      <span className="flex-1 truncate font-mono text-xs text-[--muted]">
-                        {url}
-                      </span>
-                      <IconButton
-                        size="sm"
-                        rounded
-                        icon={<FaRegTrashAlt />}
-                        intent="alert-subtle"
-                        onClick={() =>
-                          handleUrlsUpdate(urls.filter((u) => u !== url))
-                        }
-                      />
-                    </div>
-                    <DisclosureContent>
-                      <SyncedPatterns
-                        renderType={renderType}
-                        syncMode={syncMode}
-                        syncedValues={urlState?.values ?? []}
-                        isLoading={urlState?.isLoading ?? true}
-                        fetchError={urlState?.error ?? null}
-                      />
-                    </DisclosureContent>
-                  </DisclosureItem>
-                </Disclosure>
+                <div key={url} data-synced-url={url}>
+                  <Disclosure type="single" collapsible>
+                    <DisclosureItem value="items">
+                      <div className="flex items-center gap-2 p-2 px-3 text-sm">
+                        <DisclosureTrigger>
+                          <button
+                            type="button"
+                            className="group flex items-center"
+                          >
+                            <FaChevronDown className="text-[10px] text-[--muted] transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                          </button>
+                        </DisclosureTrigger>
+                        <span className="flex-1 break-all font-mono text-xs text-[--muted]">
+                          {url}
+                        </span>
+                        {syncConfig.onInsertPlaceholder && (
+                          <Tooltip
+                            trigger={
+                              <IconButton
+                                size="sm"
+                                rounded
+                                icon={<FaMapPin />}
+                                intent={
+                                  syncConfig.hasPlaceholder?.(url)
+                                    ? 'primary'
+                                    : 'primary-subtle'
+                                }
+                                onClick={() => {
+                                  if (syncConfig.hasPlaceholder?.(url)) {
+                                    syncConfig.onRemovePlaceholder?.(url);
+                                  } else {
+                                    syncConfig.onInsertPlaceholder!(url);
+                                  }
+                                }}
+                              />
+                            }
+                          >
+                            {syncConfig.hasPlaceholder?.(url)
+                              ? 'Remove from inline'
+                              : 'Place inline'}
+                          </Tooltip>
+                        )}
+                        <IconButton
+                          size="sm"
+                          rounded
+                          icon={<FaRegTrashAlt />}
+                          intent="alert-subtle"
+                          onClick={() =>
+                            handleUrlsUpdate(urls.filter((u) => u !== url))
+                          }
+                        />
+                      </div>
+                      <DisclosureContent>
+                        <SyncedPatterns
+                          renderType={renderType}
+                          syncMode={syncMode}
+                          syncedValues={urlState?.values ?? []}
+                          isLoading={urlState?.isLoading ?? true}
+                          fetchError={urlState?.error ?? null}
+                        />
+                      </DisclosureContent>
+                    </DisclosureItem>
+                  </Disclosure>
+                </div>
               );
             })}
           </div>

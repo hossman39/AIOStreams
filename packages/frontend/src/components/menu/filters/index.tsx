@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect } from 'react';
 import { PageWrapper } from '../../shared/page-wrapper';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs';
 import { SettingsNavCard } from '../../shared/settings-card';
@@ -19,6 +19,7 @@ import {
   MdHdrOn,
   MdMovieFilter,
   MdPerson,
+  MdSubtitles,
   MdSurroundSound,
   MdTextFields,
   MdVideoLibrary,
@@ -65,6 +66,9 @@ import { Slider } from '../../ui/slider/slider';
 import MarkdownLite from '../../shared/markdown-lite';
 import { useMode } from '@/context/mode';
 import { copyToClipboard } from '@/utils/clipboard';
+import { useParentInheritance } from '@/context/userData';
+import { useSubTab } from '@/context/sub-tab';
+import { InheritedBadge } from '../../shared/inherited-badge';
 
 import { FilterSettings } from './_components/filter-settings';
 import {
@@ -103,6 +107,69 @@ import {
   defaultDeduplicatorMultiGroupBehaviour,
 } from './_components/filter-utils';
 import type { SyncConfig } from './_components/synced-patterns';
+import { UserData } from '@aiostreams/core';
+import { toast } from 'sonner';
+import { Popover } from '@/components/ui/popover';
+import { AiOutlineExclamationCircle } from 'react-icons/ai';
+
+/** Create a `<SYNCED: url>` placeholder string. */
+function makeSyncedPlaceholder(url: string): string {
+  return `<SYNCED: ${url}>`;
+}
+
+/** Maps synced-URL config keys to their corresponding values array keys. */
+const SYNCED_URL_TO_VALUES_KEY: Record<string, keyof UserData> = {
+  syncedPreferredRegexUrls: 'preferredRegexPatterns',
+  syncedExcludedRegexUrls: 'excludedRegexPatterns',
+  syncedIncludedRegexUrls: 'includedRegexPatterns',
+  syncedRequiredRegexUrls: 'requiredRegexPatterns',
+  syncedRankedRegexUrls: 'rankedRegexPatterns',
+  syncedPreferredStreamExpressionUrls: 'preferredStreamExpressions',
+  syncedExcludedStreamExpressionUrls: 'excludedStreamExpressions',
+  syncedIncludedStreamExpressionUrls: 'includedStreamExpressions',
+  syncedRequiredStreamExpressionUrls: 'requiredStreamExpressions',
+  syncedRankedStreamExpressionUrls: 'rankedStreamExpressions',
+};
+
+/** Build a placeholder entry shaped for the given values array type. */
+function buildPlaceholderEntry(valuesKey: keyof UserData, url: string): any {
+  const placeholder = makeSyncedPlaceholder(url);
+  switch (valuesKey) {
+    // string[]
+    case 'excludedRegexPatterns':
+    case 'includedRegexPatterns':
+    case 'requiredRegexPatterns':
+      return placeholder;
+    // {name, pattern}[]
+    case 'preferredRegexPatterns':
+      return { name: '', pattern: placeholder };
+    // {pattern, name?, score}[]
+    case 'rankedRegexPatterns':
+      return { pattern: placeholder, name: '', score: 0 };
+    // {expression, enabled}[]
+    case 'excludedStreamExpressions':
+    case 'includedStreamExpressions':
+    case 'requiredStreamExpressions':
+    case 'preferredStreamExpressions':
+      return { expression: placeholder, enabled: true };
+    // {expression, score, enabled}[]
+    case 'rankedStreamExpressions':
+      return { expression: placeholder, score: 0, enabled: true };
+    default:
+      return placeholder;
+  }
+}
+
+/** Extract the placeholder-carrying field (pattern/expression/string) from a values entry. */
+function extractFieldForPlaceholder(
+  _valuesKey: keyof UserData,
+  entry: any
+): string {
+  if (typeof entry === 'string') return entry;
+  if (entry?.pattern !== undefined) return entry.pattern;
+  if (entry?.expression !== undefined) return entry.expression;
+  return '';
+}
 
 export function FiltersMenu() {
   return (
@@ -115,27 +182,16 @@ export function FiltersMenu() {
 }
 
 function Content() {
-  const [tab, setTab] = useState('cache');
+  const { tab, setTab } = useSubTab('filters');
   const { status } = useStatus();
   const { mode } = useMode();
   const { userData, setUserData } = useUserData();
+  const { isInherited, hasParent } = useParentInheritance();
   const allowedRegexModal = useDisclosure(false);
   const allowedRegexUrlsModal = useDisclosure(false);
   const whitelistedSelUrlsModal = useDisclosure(false);
-  // check query params for a specific filter tab to open
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const filter = params.get('filter');
-    if (filter) {
-      setTab(filter);
-    }
-  }, []);
   const handleTabChange = (value: string) => {
     setTab(value);
-    const params = new URLSearchParams(window.location.search);
-    params.set('filter', value);
-    const newUrl = `${window.location.pathname}?${params.toString()}`;
-    window.history.replaceState({}, '', newUrl);
   };
 
   const getSyncedProps = (
@@ -144,24 +200,63 @@ function Content() {
       | 'syncedExcludedRegexUrls'
       | 'syncedIncludedRegexUrls'
       | 'syncedRequiredRegexUrls'
+      | 'syncedRankedRegexUrls'
       | 'syncedPreferredStreamExpressionUrls'
       | 'syncedExcludedStreamExpressionUrls'
       | 'syncedIncludedStreamExpressionUrls'
       | 'syncedRequiredStreamExpressionUrls'
       | 'syncedRankedStreamExpressionUrls'
-  ): { syncConfig: SyncConfig } => ({
-    syncConfig: {
-      urls: userData[key] || [],
-      trusted: userData.trusted,
-      syncMode: key.includes('StreamExpression') ? 'sel' : 'regex',
-      onUrlsChange: (urls: string[]) => {
-        setUserData((prev) => ({
-          ...prev,
-          [key]: urls,
-        }));
+  ): { syncConfig: SyncConfig } => {
+    const valuesKey = SYNCED_URL_TO_VALUES_KEY[key];
+    return {
+      syncConfig: {
+        urls: userData[key] || [],
+        trusted: userData.trusted,
+        syncMode: key.includes('StreamExpression') ? 'sel' : 'regex',
+        onUrlsChange: (urls: string[]) => {
+          setUserData((prev) => ({
+            ...prev,
+            [key]: urls,
+          }));
+        },
+        onInsertPlaceholder: valuesKey
+          ? (url: string) => {
+              const entry = buildPlaceholderEntry(valuesKey, url);
+              setUserData((prev) => ({
+                ...prev,
+                [valuesKey]: [...((prev as any)[valuesKey] || []), entry],
+              }));
+            }
+          : undefined,
+        onRemovePlaceholder: valuesKey
+          ? (url: string) => {
+              const placeholder = makeSyncedPlaceholder(url);
+              setUserData((prev) => {
+                const arr = (prev as any)[valuesKey];
+                if (!Array.isArray(arr)) return prev;
+                const filtered = arr.filter(
+                  (entry: any) =>
+                    extractFieldForPlaceholder(valuesKey, entry) !== placeholder
+                );
+                if (filtered.length === arr.length) return prev;
+                return { ...prev, [valuesKey]: filtered };
+              });
+            }
+          : undefined,
+        hasPlaceholder: valuesKey
+          ? (url: string) => {
+              const placeholder = makeSyncedPlaceholder(url);
+              const arr = (userData as any)[valuesKey];
+              if (!Array.isArray(arr)) return false;
+              return arr.some(
+                (entry: any) =>
+                  extractFieldForPlaceholder(valuesKey, entry) === placeholder
+              );
+            }
+          : undefined,
       },
-    },
-  });
+    };
+  };
 
   useEffect(() => {
     // set default preferred filters if they are undefined
@@ -216,7 +311,12 @@ function Content() {
           <SettingsNavCard>
             <div className="flex flex-col gap-4 md:flex-row justify-between items-center">
               <div className="space-y-1 my-2 px-2">
-                <h4 className="text-center md:text-left">Filters</h4>
+                <div className="flex items-center gap-2 justify-center md:justify-start">
+                  <h4>Filters</h4>
+                  {hasParent && isInherited('filters') && (
+                    <InheritedBadge section="filters" />
+                  )}
+                </div>
               </div>
               <div></div>
             </div>
@@ -278,6 +378,10 @@ function Content() {
                 <FaLanguage className="text-lg mr-3" />
                 Language
               </TabsTrigger>
+              <TabsTrigger value="subtitle">
+                <MdSubtitles className="text-lg mr-3" />
+                Subtitle
+              </TabsTrigger>
               <TabsTrigger value="seeders">
                 <MdPerson className="text-lg mr-3" />
                 Seeders
@@ -288,7 +392,7 @@ function Content() {
               </TabsTrigger>
               {mode === 'pro' && (
                 <>
-                  <TabsTrigger value="title-matching">
+                  <TabsTrigger value="matching">
                     <FaEquals className="text-lg mr-3" />
                     Matching
                   </TabsTrigger>
@@ -346,11 +450,16 @@ function Content() {
         </TabsList>
 
         <div className="space-y-0 relative">
-          <TabsContent value="cache" className="space-y-4">
+          <TabsContent
+            id="filter-tab-cache"
+            value="cache"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Cache" />
               <div className="space-y-4">
                 <SettingsCard
+                  id="excludeUncached"
                   title="Uncached"
                   description="Control the exclusion of uncached results"
                 >
@@ -458,6 +567,7 @@ function Content() {
                   </div>
                 </SettingsCard>
                 <SettingsCard
+                  id="excludeCached"
                   title="Cached"
                   description="Control the exclusion of cached results"
                 >
@@ -566,7 +676,11 @@ function Content() {
             </>
           </TabsContent>
 
-          <TabsContent value="resolution" className="space-y-4">
+          <TabsContent
+            id="filter-tab-resolution"
+            value="resolution"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Resolution" />
               <FilterSettings<Resolution>
@@ -608,7 +722,11 @@ function Content() {
               />
             </>
           </TabsContent>
-          <TabsContent value="quality" className="space-y-4">
+          <TabsContent
+            id="filter-tab-quality"
+            value="quality"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Quality" />
               <FilterSettings<Quality>
@@ -650,7 +768,11 @@ function Content() {
               />
             </>
           </TabsContent>
-          <TabsContent value="encode" className="space-y-4">
+          <TabsContent
+            id="filter-tab-encode"
+            value="encode"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Encode" />
               <FilterSettings<Encode>
@@ -692,7 +814,11 @@ function Content() {
               />
             </>
           </TabsContent>
-          <TabsContent value="stream-type" className="space-y-4">
+          <TabsContent
+            id="filter-tab-stream-type"
+            value="stream-type"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Stream Type" />
               <FilterSettings<StreamType>
@@ -734,7 +860,11 @@ function Content() {
               />
             </>
           </TabsContent>
-          <TabsContent value="visual-tag" className="space-y-4">
+          <TabsContent
+            id="filter-tab-visual-tag"
+            value="visual-tag"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Visual Tag" />
               <FilterSettings<VisualTag>
@@ -776,7 +906,11 @@ function Content() {
               />
             </>
           </TabsContent>
-          <TabsContent value="audio-tag" className="space-y-4">
+          <TabsContent
+            id="filter-tab-audio-tag"
+            value="audio-tag"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Audio Tag" />
               <FilterSettings<AudioTag>
@@ -816,7 +950,11 @@ function Content() {
               />
             </>
           </TabsContent>
-          <TabsContent value="audio-channel" className="space-y-4">
+          <TabsContent
+            id="filter-tab-audio-channel"
+            value="audio-channel"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Audio Channel" />
               <FilterSettings<AudioChannel>
@@ -856,7 +994,11 @@ function Content() {
               />
             </>
           </TabsContent>
-          <TabsContent value="language" className="space-y-4">
+          <TabsContent
+            id="filter-tab-language"
+            value="language"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Language" />
               <FilterSettings<Language>
@@ -899,7 +1041,133 @@ function Content() {
               />
             </>
           </TabsContent>
-          <TabsContent value="seeders" className="space-y-4">
+          <TabsContent
+            id="filter-tab-subtitle"
+            value="subtitle"
+            className="space-y-4"
+          >
+            <>
+              <HeadingWithPageControls heading="Subtitle" />
+
+              <Alert
+                intent="warning"
+                title="Difference between Language and Subtitle filters"
+                description={
+                  <div className="text-sm">
+                    Languages and subtitles behave differently depending on what
+                    information is available for a stream.
+                    <br />
+                    <br />
+                    <span className="inline-flex items-center gap-1">
+                      When accurate media info is available
+                      <Popover
+                        className="text-sm "
+                        trigger={
+                          <AiOutlineExclamationCircle className="transition-opacity opacity-45 hover:opacity-90 inline-block cursor-pointer" />
+                        }
+                      >
+                        <div className="max-w-sm">
+                          <div className="font-medium">
+                            Accurate media info is available for:
+                          </div>
+                          <ul className="list-disc list-inside mt-2 space-y-1 text-xs">
+                            <li>
+                              Certain results from built-in or service-wrapped
+                              addons
+                            </li>
+                            <li>
+                              Certain results from StremThru Torz/Store and
+                              Meteor
+                            </li>
+                            <li>
+                              Torznab/Newznab results from indexers that provide
+                              separate audio/subtitle metadata
+                            </li>
+                            <li>
+                              <strong>nekoBT</strong> results (all results have
+                              accurate audio/subtitle info)
+                            </li>
+                            <li>
+                              <strong>Torrentio</strong> anime results
+                              (subtitles field may be populated)
+                            </li>
+                          </ul>
+                        </div>
+                      </Popover>
+                    </span>
+                    {', '}
+                    <code className="bg-base-200 px-1 py-0.5 rounded">
+                      languages
+                    </code>{' '}
+                    contains audio track languages and{' '}
+                    <code className="bg-base-200 px-1 py-0.5 rounded">
+                      subtitles
+                    </code>{' '}
+                    contains embedded subtitle languages.
+                    <br />
+                    <br />
+                    In all other cases,{' '}
+                    <code className="bg-base-200 px-1 py-0.5 rounded">
+                      subtitles
+                    </code>{' '}
+                    is empty and{' '}
+                    <code className="bg-base-200 px-1 py-0.5 rounded">
+                      languages
+                    </code>{' '}
+                    contains every language found in the filename &mdash;
+                    including subtitle-only languages (e.g. a filename
+                    containing &quot;Eng.Sub&quot; will add English to
+                    languages, not subtitles). This is a known limitation of
+                    filename-only parsing.
+                  </div>
+                }
+              />
+
+              <FilterSettings<Language>
+                filterName="Subtitles"
+                preferredOptions={userData.preferredSubtitles || []}
+                requiredOptions={userData.requiredSubtitles || []}
+                excludedOptions={userData.excludedSubtitles || []}
+                includedOptions={userData.includedSubtitles || []}
+                onPreferredChange={(preferred) =>
+                  setUserData((prev) => ({
+                    ...prev,
+                    preferredSubtitles: preferred,
+                  }))
+                }
+                onRequiredChange={(required) =>
+                  setUserData((prev) => ({
+                    ...prev,
+                    requiredSubtitles: required,
+                  }))
+                }
+                onExcludedChange={(excluded) =>
+                  setUserData((prev) => ({
+                    ...prev,
+                    excludedSubtitles: excluded,
+                  }))
+                }
+                onIncludedChange={(included) =>
+                  setUserData((prev) => ({
+                    ...prev,
+                    includedSubtitles: included,
+                  }))
+                }
+                options={LANGUAGES.map((language) => ({
+                  name: language
+                    .split(' ')
+                    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                    .join(' '),
+                  value: language,
+                }))}
+              />
+            </>
+          </TabsContent>
+          <TabsContent
+            id="filter-tab-seeders"
+            value="seeders"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Seeders" />
               <SettingsCard
@@ -1183,7 +1451,7 @@ function Content() {
               </SettingsCard>
             </>
           </TabsContent>
-          <TabsContent value="age" className="space-y-4">
+          <TabsContent id="filter-tab-age" value="age" className="space-y-4">
             <>
               <HeadingWithPageControls heading="Age" />
               <SettingsCard
@@ -1476,11 +1744,16 @@ function Content() {
               </SettingsCard>
             </>
           </TabsContent>
-          <TabsContent value="title-matching" className="space-y-4">
+          <TabsContent
+            id="filter-tab-matching"
+            value="matching"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Matching" />
               <div className="space-y-4">
                 <SettingsCard
+                  id="titleMatching"
                   title="Title Matching"
                   description="Any streams which don't specifically match the requested title will be filtered out. You can optionally choose to only apply it to specific request types and addons. This requires a TMDB Read Access Token to be set in the Services menu."
                 >
@@ -1625,6 +1898,7 @@ function Content() {
                 </SettingsCard>
 
                 <SettingsCard
+                  id="yearMatching"
                   title="Year Matching"
                   description="Any streams which don't specifically match the requested year will be filtered out. You can optionally choose to only apply it to specific request types and addons"
                 >
@@ -1738,6 +2012,7 @@ function Content() {
                 </SettingsCard>
 
                 <SettingsCard
+                  id="seasonEpisodeMatching"
                   title="Season/Episode Matching"
                   description="Any streams which don't specifically match the requested season/episode will be filtered out. You can optionally choose to only apply it to specific request types and addons"
                 >
@@ -1826,7 +2101,11 @@ function Content() {
               </div>
             </>
           </TabsContent>
-          <TabsContent value="stream-expression" className="space-y-4">
+          <TabsContent
+            id="filter-tab-stream-expression"
+            value="stream-expression"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Stream Expression" />
               <div className="mb-4">
@@ -2215,7 +2494,11 @@ function Content() {
               </div>
             </>
           </TabsContent>
-          <TabsContent value="keyword" className="space-y-4">
+          <TabsContent
+            id="filter-tab-keyword"
+            value="keyword"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Keyword" />
               <div className="mb-4">
@@ -2280,7 +2563,11 @@ function Content() {
               </div>
             </>
           </TabsContent>
-          <TabsContent value="release-group" className="space-y-4">
+          <TabsContent
+            id="filter-tab-release-group"
+            value="release-group"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Release Group" />
               <div className="mb-4">
@@ -2341,7 +2628,11 @@ function Content() {
               </div>
             </>
           </TabsContent>
-          <TabsContent value="regex" className="space-y-4">
+          <TabsContent
+            id="filter-tab-regex"
+            value="regex"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Regex" />
               <div className="mb-4">
@@ -2428,6 +2719,7 @@ function Content() {
               <div className="space-y-4">
                 {mode === 'pro' && (
                   <TextInputs
+                    fieldName="requiredRegexPatterns"
                     label="Required Regex"
                     help="Streams that do not match any of these regular expressions will be excluded"
                     itemName="Regex"
@@ -2443,6 +2735,7 @@ function Content() {
                 )}
                 <TextInputs
                   label="Excluded Regex"
+                  fieldName="excludedRegexPatterns"
                   help="Streams that match any of these regular expressions will be excluded"
                   itemName="Regex"
                   values={userData.excludedRegexPatterns || []}
@@ -2457,6 +2750,7 @@ function Content() {
                 {mode === 'pro' && (
                   <TextInputs
                     label="Included Regex"
+                    fieldName="includedRegexPatterns"
                     help="Streams that match any of these regular expressions will be included, ignoring other exclude/required filters"
                     itemName="Regex"
                     values={userData.includedRegexPatterns || []}
@@ -2561,20 +2855,16 @@ function Content() {
                       ],
                     }));
                   }}
-                  syncConfig={{
-                    urls: userData.syncedRankedRegexUrls || [],
-                    onUrlsChange: (urls) =>
-                      setUserData((prev) => ({
-                        ...prev,
-                        syncedRankedRegexUrls: urls,
-                      })),
-                    trusted: userData.trusted,
-                  }}
+                  {...getSyncedProps('syncedRankedRegexUrls')}
                 />
               </div>
             </>
           </TabsContent>
-          <TabsContent value="bitrate" className="space-y-4">
+          <TabsContent
+            id="filter-tab-bitrate"
+            value="bitrate"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Bitrate" />
               <div className="mb-4">
@@ -2759,7 +3049,7 @@ function Content() {
               </div>
             </>
           </TabsContent>
-          <TabsContent value="size" className="space-y-4">
+          <TabsContent id="filter-tab-size" value="size" className="space-y-4">
             <>
               <HeadingWithPageControls heading="Size" />
               <div className="mb-4">
@@ -2900,7 +3190,11 @@ function Content() {
               </div>
             </>
           </TabsContent>
-          <TabsContent value="limit" className="space-y-4">
+          <TabsContent
+            id="filter-tab-limit"
+            value="limit"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Result Limits" />
               <SettingsCard description="Apply limits to specific kinds of results">
@@ -3049,7 +3343,11 @@ function Content() {
               </SettingsCard>
             </>
           </TabsContent>
-          <TabsContent value="deduplicator" className="space-y-4">
+          <TabsContent
+            id="filter-tab-deduplicator"
+            value="deduplicator"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Deduplicator" />
               <div className="mb-4">
@@ -3353,7 +3651,11 @@ function Content() {
               </div>
             </>
           </TabsContent>
-          <TabsContent value="miscellaneous" className="space-y-4">
+          <TabsContent
+            id="filter-tab-miscellaneous"
+            value="miscellaneous"
+            className="space-y-4"
+          >
             <>
               <HeadingWithPageControls heading="Miscellaneous" />
               <div className="mb-4">
@@ -3363,6 +3665,7 @@ function Content() {
               </div>
               <div className="space-y-4">
                 <SettingsCard
+                  id="digitalReleaseFilter"
                   title="Digital Release Filter"
                   description="This will filter out all results for movies that are determined to not have a digital release."
                 >
@@ -3473,8 +3776,28 @@ function Content() {
                       />
                     </div>
                   </div>
+                  <Switch
+                    label="Show Info Stream When Filtered"
+                    side="right"
+                    defaultValue={true}
+                    disabled={!userData.digitalReleaseFilter?.enabled}
+                    value={
+                      userData.digitalReleaseFilter?.showInfoOnFilter ?? true
+                    }
+                    moreHelp="When the digital release filter triggers, show an info stream."
+                    onValueChange={(value) => {
+                      setUserData((prev) => ({
+                        ...prev,
+                        digitalReleaseFilter: {
+                          ...prev.digitalReleaseFilter,
+                          showInfoOnFilter: value,
+                        },
+                      }));
+                    }}
+                  />
                 </SettingsCard>
                 <SettingsCard
+                  id="enableSeadex"
                   title="SeaDex Integration"
                   description="Fetch SeaDex data (releases.moe) for anime to identify best quality releases."
                 >
@@ -3490,6 +3813,7 @@ function Content() {
                 </SettingsCard>
                 {mode === 'pro' && userData.excludeSeasonPacks && (
                   <SettingsCard
+                    id="excludeSeasonPacks"
                     title="Exclude Season Packs"
                     description="Whether to filter out results that contain entire seasons."
                   >
@@ -3567,7 +3891,9 @@ function Content() {
                       icon={<FaRegCopy />}
                       onClick={() =>
                         copyToClipboard(url, {
-                          successMessage: 'URL copied to clipboard',
+                          onSuccess: () =>
+                            toast.success('URL copied to clipboard'),
+                          onError: () => toast.error('Failed to copy URL'),
                         })
                       }
                     />
@@ -3609,7 +3935,9 @@ function Content() {
                       icon={<FaRegCopy />}
                       onClick={() =>
                         copyToClipboard(url, {
-                          successMessage: 'URL copied to clipboard',
+                          onSuccess: () =>
+                            toast.success('URL copied to clipboard'),
+                          onError: () => toast.error('Failed to copy URL'),
                         })
                       }
                     />

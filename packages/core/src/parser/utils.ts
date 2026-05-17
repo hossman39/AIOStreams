@@ -107,7 +107,7 @@ export function preprocessTitle(
 
   const separatorPatterns = [
     /\s*[\/\|]\s*/,
-    /[\s\.\-\(]+a[\s\.]?k[\s\.]?a[\s\.\)\-]+/i,
+    /[\s\.\-\(\[]+a[\s\.]?k[\s\.]?a[\s\.\)\-\]]+/i,
     /\s*\(([^)]+)\)$/,
   ];
   for (const pattern of separatorPatterns) {
@@ -253,4 +253,26 @@ export function parseBitrate(bitrateString: string): number | undefined {
     default:
       return num;
   }
+}
+
+function base32ToHex(base32: string): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const char of base32.toUpperCase()) {
+    bits += alphabet.indexOf(char).toString(2).padStart(5, '0');
+  }
+  let hex = '';
+  for (let i = 0; i + 4 <= bits.length; i += 4) {
+    hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+  }
+  return hex;
+}
+
+export function extractInfoHashFromMagnet(magnet: string): string | undefined {
+  const match = magnet.match(
+    /(?:urn(?::|%3A)btih(?::|%3A))([a-f0-9]{40}|[a-z2-7]{32})/i
+  )?.[1];
+  if (!match) return undefined;
+  if (match.length === 40) return match.toLowerCase();
+  return base32ToHex(match);
 }

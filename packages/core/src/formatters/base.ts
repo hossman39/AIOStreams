@@ -7,11 +7,10 @@ import {
   formatBitrate,
   formatDuration,
   formatHours,
-  languageToCode,
-  languageToEmoji,
   makeSmall,
   formatSmartBitrate,
 } from './utils.js';
+import { languageToCode, languageToEmoji } from '../utils/languages.js';
 import { Env } from '../utils/env.js';
 
 const logger = createLogger('formatter');
@@ -101,6 +100,7 @@ export interface ParseValue {
     uncensored: boolean;
     unrated: boolean;
     upscaled: boolean;
+    hasChapters: boolean;
     network: string | null;
     container: string | null;
     extension: string | null;
@@ -258,25 +258,7 @@ export abstract class BaseFormatter {
 
   protected convertStreamToParseValue(stream: ParsedStream): ParseValue {
     // Get original language from formatter context instead of from the stream's languages array hack
-    const resolvedOriginalLanguage = this.formatterContext.originalLanguage;
-    const languages = stream.parsedFile?.languages || null;
-    const subtitles = stream.parsedFile?.subtitles || null;
 
-    const rawUserLanguages = [
-      ...(this.userData.preferredLanguages || []),
-      ...(this.userData.requiredLanguages || []),
-      ...(this.userData.includedLanguages || []),
-    ];
-    const userSpecifiedLanguages = [
-      ...new Set(
-        rawUserLanguages.flatMap((lang) => {
-          if (lang === 'Original' && resolvedOriginalLanguage) {
-            return [resolvedOriginalLanguage];
-          }
-          return [lang];
-        })
-      ),
-    ];
     const getPaddedNumber = (number: number, length: number) =>
       number.toString().padStart(length, '0');
     const formattedSeasonString = stream.parsedFile?.seasons?.length
@@ -307,82 +289,112 @@ export abstract class BaseFormatter {
         : `E${getPaddedNumber(stream.parsedFile.folderEpisodes[0], 2)}-${getPaddedNumber(stream.parsedFile.folderEpisodes[stream.parsedFile.folderEpisodes.length - 1], 2)}`
       : undefined;
 
-    const buildLanguageVariants = (values: string[] | null) => {
-      const sortedValues = values
-        ? [...values].sort((a, b) => {
-            const aIndex = userSpecifiedLanguages.indexOf(a as any);
-            const bIndex = userSpecifiedLanguages.indexOf(b as any);
+    const getFieldValues = (field: string): string[] => {
+      // capitalise first letter
+      const key = field.charAt(0).toUpperCase() + field.slice(1);
+      return [
+        ...((this.userData[`preferred${key}` as keyof UserData] ||
+          []) as string[]),
+        ...((this.userData[`required${key}` as keyof UserData] ||
+          []) as string[]),
+        ...((this.userData[`included${key}` as keyof UserData] ||
+          []) as string[]),
+      ];
+    };
 
-            const aInUser = aIndex !== -1;
-            const bInUser = bIndex !== -1;
+    const sortByUserPreference = <T extends string>(
+      items: T[] | undefined,
+      userPrefs: string[]
+    ): T[] | null => {
+      if (!items) return null;
+      if (!userPrefs.length) return items;
+      return [...items].sort((a, b) => {
+        const aIndex = userPrefs.indexOf(a);
+        const bIndex = userPrefs.indexOf(b);
+        const aInPrefs = aIndex !== -1;
+        const bInPrefs = bIndex !== -1;
+        if (aInPrefs && bInPrefs) {
+          return aIndex - bIndex;
+        }
+        return aInPrefs ? -1 : bInPrefs ? 1 : 0;
+      });
+    };
 
-            return aInUser && bInUser
-              ? aIndex - bIndex
-              : aInUser
-                ? -1
-                : bInUser
-                  ? 1
-                  : values.indexOf(a) - values.indexOf(b);
-          })
-        : null;
+    const userSpecifiedLanguages = [
+      ...new Set(
+        getFieldValues('languages').map((lang) =>
+          lang === 'Original' && this.formatterContext.originalLanguage
+            ? this.formatterContext.originalLanguage
+            : lang
+        )
+      ),
+    ];
+    const userSpecifiedSubtitles = [
+      ...new Set(
+        getFieldValues('subtitles').map((lang) =>
+          lang === 'Original' && this.formatterContext.originalLanguage
+            ? this.formatterContext.originalLanguage
+            : lang
+        )
+      ),
+    ];
+
+    const buildLanguageVariants = (
+      values: string[] | undefined,
+      userSpecifiedValues: string[]
+    ) => {
+      const sortedValues = sortByUserPreference(values, userSpecifiedValues);
 
       const userValues = sortedValues
         ? sortedValues.filter((value) =>
-            userSpecifiedLanguages.includes(value as any)
+            userSpecifiedValues.includes(value as any)
           )
         : null;
 
-      const emojis = sortedValues
-        ? sortedValues
-            .map((value) => languageToEmoji(value) || value)
-            .filter((value, index, self) => self.indexOf(value) === index)
-        : null;
+      const applyModifiers = (
+        list: string[] | null,
+        ...modifiers: Array<(value: string) => string | undefined>
+      ): string[] | null => {
+        if (!list) return null;
 
-      const userEmojis = userValues
-        ? userValues
-            .map((value) => languageToEmoji(value) || value)
-            .filter((value, index, self) => self.indexOf(value) === index)
-        : null;
+        const modified = list.map((value) =>
+          modifiers.reduce<string | undefined>(
+            (acc, modifier) =>
+              acc !== undefined ? (modifier(acc) ?? acc) : undefined,
+            value
+          )
+        );
 
-      const codes = sortedValues
-        ? sortedValues
-            .map((value) => languageToCode(value) || value.toUpperCase())
-            .filter((value, index, self) => self.indexOf(value) === index)
-        : null;
-
-      const userCodes = userValues
-        ? userValues
-            .map((value) => languageToCode(value) || value.toUpperCase())
-            .filter((value, index, self) => self.indexOf(value) === index)
-        : null;
-
-      const smallCodes = sortedValues
-        ? sortedValues
-            .map((value) => languageToCode(value) || value)
-            .filter((value, index, self) => self.indexOf(value) === index)
-            .map((value) => makeSmall(value))
-        : null;
-
-      const userSmallCodes = userValues
-        ? userValues
-            .map((value) => languageToCode(value) || value)
-            .filter((value, index, self) => self.indexOf(value) === index)
-            .map((value) => makeSmall(value))
-        : null;
-
-      const usEmojis = sortedValues
-        ? sortedValues
-            .map((value) => languageToEmoji(value) || value)
-            .map((emoji) => emoji.replace('🇬🇧', '🇺🇸🦅'))
-            .filter((value, index, self) => self.indexOf(value) === index)
-        : null;
-
-      const userUsEmojis = userValues
-        ? userValues
-            .map((value) => languageToEmoji(value) || value)
-            .map((emoji) => emoji.replace('🇬🇧', '🇺🇸🦅'))
-            .filter((value, index, self) => self.indexOf(value) === index)
-        : null;
+        return [...new Set(modified.filter(Boolean) as string[])];
+      };
+      const emojis = applyModifiers(sortedValues, languageToEmoji);
+      const userEmojis = applyModifiers(userValues, languageToEmoji);
+      const codes = applyModifiers(
+        sortedValues,
+        (value) => languageToCode(value) || value.toUpperCase()
+      );
+      const userCodes = applyModifiers(
+        userValues,
+        (value) => languageToCode(value) || value.toUpperCase()
+      );
+      const smallCodes = applyModifiers(
+        sortedValues,
+        languageToCode,
+        makeSmall
+      );
+      const userSmallCodes = applyModifiers(
+        userValues,
+        languageToCode,
+        makeSmall
+      );
+      const usEmojis = applyModifiers(sortedValues, languageToEmoji, (emoji) =>
+        emoji.replace('🇬🇧', '🇺🇸🦅')
+      );
+      const userUsEmojis = applyModifiers(
+        userValues,
+        languageToEmoji,
+        (emoji) => emoji.replace('🇬🇧', '🇺🇸🦅')
+      );
 
       return {
         sortedValues,
@@ -398,8 +410,28 @@ export abstract class BaseFormatter {
       };
     };
 
-    const languageVariants = buildLanguageVariants(languages);
-    const subtitleVariants = buildLanguageVariants(subtitles);
+    const languageVariants = buildLanguageVariants(
+      stream.parsedFile?.languages,
+      userSpecifiedLanguages
+    );
+    const subtitleVariants = buildLanguageVariants(
+      stream.parsedFile?.subtitles,
+      userSpecifiedSubtitles?.length
+        ? userSpecifiedSubtitles
+        : userSpecifiedLanguages
+    );
+    const sortedAudioChannels = sortByUserPreference(
+      stream.parsedFile?.audioChannels,
+      getFieldValues('audioChannels')
+    );
+    const sortedAudioTags = sortByUserPreference(
+      stream.parsedFile?.audioTags,
+      getFieldValues('audioTags')
+    );
+    const sortedVisualTags = sortByUserPreference(
+      stream.parsedFile?.visualTags,
+      getFieldValues('visualTags')
+    );
 
     const formattedAge = stream.age ? formatHours(stream.age) : null;
     const parseValue: ParseValue = {
@@ -435,8 +467,8 @@ export abstract class BaseFormatter {
         uSmallSubtitleCodes: subtitleVariants.userSmallCodes,
         wedontknowwhatakilometeris: languageVariants.usEmojis,
         uWedontknowwhatakilometeris: languageVariants.userUsEmojis,
-        visualTags: stream.parsedFile?.visualTags || null,
-        audioTags: stream.parsedFile?.audioTags || null,
+        visualTags: sortedVisualTags,
+        audioTags: sortedAudioTags,
         releaseGroup: stream.parsedFile?.releaseGroup || null,
         regexMatched:
           stream.regexMatched?.name || stream.rankedRegexesMatched?.[0] || null,
@@ -461,7 +493,7 @@ export abstract class BaseFormatter {
               )
             : null,
         encode: stream.parsedFile?.encode || null,
-        audioChannels: stream.parsedFile?.audioChannels || null,
+        audioChannels: sortedAudioChannels || null,
         indexer: stream.indexer || null,
         seeders: stream.torrent?.seeders ?? null,
         private: stream.torrent?.private ?? false,
@@ -497,6 +529,7 @@ export abstract class BaseFormatter {
         uncensored: stream.parsedFile?.uncensored ?? false,
         unrated: stream.parsedFile?.unrated ?? false,
         upscaled: stream.parsedFile?.upscaled ?? false,
+        hasChapters: stream.parsedFile?.hasChapters ?? false,
         network: stream.parsedFile?.network || null,
         container: stream.parsedFile?.container || null,
         extension: stream.parsedFile?.extension || null,
@@ -1001,13 +1034,16 @@ export abstract class BaseFormatter {
           return result;
         }
         case mod.startsWith('truncate(') && mod.endsWith(')'): {
-          // Extract N from truncate(N)
           const inside = _mod.substring('truncate('.length, _mod.length - 1);
           const n = parseInt(inside, 10);
           if (!isNaN(n) && n >= 0) {
-            if (variable.length > n) {
-              // Truncate to N characters and remove trailing whitespace
-              const truncated = variable.slice(0, n).replace(/\s+$/, '');
+            const graphemes = [...new Intl.Segmenter().segment(variable)];
+            if (graphemes.length > n) {
+              const truncated = graphemes
+                .slice(0, n)
+                .map((s) => s.segment)
+                .join('')
+                .replace(/\s+$/, '');
               return truncated + '…';
             }
             return variable;

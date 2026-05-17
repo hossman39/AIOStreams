@@ -43,12 +43,18 @@ export type SortCriterion = z.infer<typeof SortCriterion>;
 const StreamTypes = z.enum(constants.STREAM_TYPES);
 const Languages = z.enum(constants.LANGUAGES);
 
+const FormatterTemplateShape = z.object({
+  name: z.string().max(Env.MAX_FORMATTER_TEMPLATE_LENGTH),
+  description: z.string().max(Env.MAX_FORMATTER_TEMPLATE_LENGTH),
+});
+
 const Formatter = z.object({
   id: z.enum(constants.FORMATTERS),
-  definition: z
+  definitions: z
     .object({
-      name: z.string().max(Env.MAX_FORMATTER_TEMPLATE_LENGTH),
-      description: z.string().max(Env.MAX_FORMATTER_TEMPLATE_LENGTH),
+      custom: FormatterTemplateShape.optional(),
+      overrides: z.record(z.string(), FormatterTemplateShape).optional(),
+      saved: z.record(z.string(), FormatterTemplateShape).optional(),
     })
     .optional(),
 });
@@ -149,7 +155,7 @@ const AddonSchema = z.object({
   pinPosition: z.enum(['top', 'bottom']).optional(),
   serviceWrapped: z.boolean().optional(),
   headers: z.record(z.string().min(1), z.string().min(1)).optional(),
-  ip: z.union([z.ipv4(), z.ipv6()]).optional(),
+  ip: z.string().optional(),
 });
 
 // preset objects are transformed into addons by a preset transformer.
@@ -359,13 +365,40 @@ export const CacheAndPlaySchema = z
 
 export type CacheAndPlay = z.infer<typeof CacheAndPlaySchema>;
 
+const MergeStrategy = z.enum(['inherit', 'extend', 'override']);
+const BinaryMergeStrategy = z.enum(['inherit', 'override']);
+
+export const ParentConfigSchema = z.object({
+  uuid: z.string().uuid(),
+  password: z.string().min(1),
+  mergeStrategies: z
+    .object({
+      presets: MergeStrategy.default('inherit'),
+      services: MergeStrategy.default('inherit'),
+      filters: BinaryMergeStrategy.default('inherit'),
+      sorting: BinaryMergeStrategy.default('inherit'),
+      formatter: BinaryMergeStrategy.default('inherit'),
+      proxy: BinaryMergeStrategy.default('inherit'),
+      metadata: BinaryMergeStrategy.default('inherit'),
+      misc: BinaryMergeStrategy.default('inherit'),
+        branding: BinaryMergeStrategy.default('inherit'),
+      fieldOverrides: z
+        .record(z.string(), z.enum(['inherit', 'override', 'extend']))
+        .optional(),
+    })
+    .optional(),
+});
+
+export type ParentConfig = z.infer<typeof ParentConfigSchema>;
+
 export const UserDataSchema = z.object({
   uuid: z.string().uuid().optional(),
+  parentConfig: ParentConfigSchema.optional(),
   encryptedPassword: z.string().min(1).optional(),
   trusted: z.boolean().optional(),
   showChanges: z.boolean().optional(),
   addonPassword: z.string().optional(),
-  ip: z.union([z.ipv4(), z.ipv6()]).optional(),
+  ip: z.string().optional(),
   addonName: z.string().min(1).max(300).optional(),
   addonLogo: z.string().url().optional(),
   addonBackground: z.string().url().optional(),
@@ -393,6 +426,10 @@ export const UserDataSchema = z.object({
   includedLanguages: z.array(Languages).optional(),
   requiredLanguages: z.array(Languages).optional(),
   preferredLanguages: z.array(Languages).optional(),
+  excludedSubtitles: z.array(Languages).optional(),
+  includedSubtitles: z.array(Languages).optional(),
+  requiredSubtitles: z.array(Languages).optional(),
+  preferredSubtitles: z.array(Languages).optional(),
   excludedVisualTags: z.array(VisualTags).optional(),
   includedVisualTags: z.array(VisualTags).optional(),
   requiredVisualTags: z.array(VisualTags).optional(),
@@ -458,6 +495,7 @@ export const UserDataSchema = z.object({
       tolerance: z.number().min(0).max(365).optional(),
       requestTypes: z.array(z.string()).optional(),
       addons: z.array(z.string()).optional(),
+      showInfoOnFilter: z.boolean().optional(),
     })
     .optional(),
   enableSeadex: z.boolean().optional(),
@@ -596,8 +634,13 @@ export const UserDataSchema = z.object({
   topPosterApiKey: z.string().optional(),
   aioratingsApiKey: z.string().optional(),
   aioratingsProfileId: z.string().optional(),
+  openposterdbApiKey: z.string().optional(),
+  openposterdbUrl: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().url().optional()
+  ),
   posterService: z
-    .enum(['rpdb', 'top-poster', 'aioratings', 'none'])
+    .enum(['rpdb', 'top-poster', 'aioratings', 'openposterdb', 'none'])
     .optional(),
   usePosterRedirectApi: z.boolean().optional(),
   usePosterServiceForMeta: z.boolean().optional(),
@@ -615,6 +658,7 @@ export const UserDataSchema = z.object({
       enabled: z.boolean().optional(),
       position: z.enum(['top', 'bottom']).optional(),
       statsToShow: z.array(z.enum(['addon', 'filter', 'timing'])).optional(),
+      showFilterStatsOnNoStreams: z.boolean().optional(),
     })
     .optional(),
   tmdbAccessToken: z.string().optional(),
@@ -912,6 +956,7 @@ export const ParsedFileSchema = z.object({
   container: z.string().optional(),
   extension: z.string().optional(),
   seasonPack: z.boolean().optional(),
+  hasChapters: z.boolean().optional(),
 });
 
 export const ParsedStreamSchema = z.object({
@@ -1265,6 +1310,8 @@ const StatusResponseSchema = z.object({
       trustedUrls: z.array(z.string()).optional(),
     }),
     loggingSensitiveInfo: z.boolean(),
+    searchApiDisabled: z.boolean(),
+    seanimeExtensionVersion: z.string().nullable(),
     tmdbApiAvailable: z.boolean(),
     forced: z.object({
       proxy: z.object({
@@ -1321,6 +1368,13 @@ export const RPDBIsValidResponse = z.object({
   valid: z.boolean(),
 });
 export type RPDBIsValidResponse = z.infer<typeof RPDBIsValidResponse>;
+
+export const OpenPosterDBIsValidResponse = z.object({
+  valid: z.boolean(),
+});
+export type OpenPosterDBIsValidResponse = z.infer<
+  typeof OpenPosterDBIsValidResponse
+>;
 
 export const TopPosterIsValidResponse = z.object({
   valid: z.boolean(),

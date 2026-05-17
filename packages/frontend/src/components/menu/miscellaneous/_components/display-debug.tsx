@@ -13,6 +13,7 @@ export function DisplayDebug() {
     <>
       <SettingsCard
         title="Statistic Streams"
+        id="statistics"
         description="AIOStreams will return the statistics of stream fetches and response times for each addon if enabled."
       >
         <Switch
@@ -68,10 +69,27 @@ export function DisplayDebug() {
             }));
           }}
         />
+        <Switch
+          label="Show Filter Stats on No Streams"
+          side="right"
+          defaultValue={true}
+          value={userData.statistics?.showFilterStatsOnNoStreams ?? true}
+          moreHelp="When filtering results in 0 streams, show filter removal statistics as forced streams regardless of your statistics settings. Use this if you normally don't want to see filter stats, but want to know why no streams are available when that happens."
+          onValueChange={(value) => {
+            setUserData((prev) => ({
+              ...prev,
+              statistics: {
+                ...prev.statistics,
+                showFilterStatsOnNoStreams: value,
+              },
+            }));
+          }}
+        />
       </SettingsCard>
 
       <SettingsCard
         title="External Downloads"
+        id="externalDownloads"
         description="Adds a stream that automatically opens the stream in your browser below every stream for easier downloading"
       >
         <Switch
@@ -87,7 +105,7 @@ export function DisplayDebug() {
         />
       </SettingsCard>
 
-      <SettingsCard title="Hide Errors">
+      <SettingsCard id="hideErrors" title="Hide Errors">
         <Switch
           label="Hide Errors"
           help="AIOStreams will attempt to return the errors in responses to streams, catalogs etc. Turning this on will hide the errors."

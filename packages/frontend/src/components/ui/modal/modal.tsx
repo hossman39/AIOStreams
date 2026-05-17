@@ -120,6 +120,14 @@ export function Modal(props: ModalProps) {
     ...rest
   } = props;
 
+  // Workaround for Radix Select-in-Dialog dismissal on Chromium: the
+  // Select can unmount between `pointerdown` and the deferred touch `click`,
+  // leaving the Dialog as the new topmost dismissable layer, which then
+  // incorrectly dismisses on the same interaction. We snapshot at pointerdown
+  // whether any inner Radix popper was open, and suppress the Dialog's
+  // outside-close on the matching interaction.
+  const innerLayerWasOpenRef = React.useRef(false);
+
   return (
     <DialogPrimitive.Root modal={!allowOutsideInteraction} {...rest}>
       {trigger && (
@@ -127,6 +135,7 @@ export function Modal(props: ModalProps) {
       )}
 
       <DialogPrimitive.Portal>
+        <InnerLayerSnapshotter targetRef={innerLayerWasOpenRef} />
         <DialogPrimitive.Overlay
           className={cn(ModalAnatomy.overlay(), overlayClass)}
         >
@@ -142,7 +151,14 @@ export function Modal(props: ModalProps) {
               onCloseAutoFocus={onCloseAutoFocus}
               onEscapeKeyDown={onEscapeKeyDown}
               onPointerDownCapture={onPointerDownCapture}
-              onInteractOutside={onInteractOutside}
+              onInteractOutside={(e) => {
+                if (innerLayerWasOpenRef.current) {
+                  innerLayerWasOpenRef.current = false;
+                  e.preventDefault();
+                  return;
+                }
+                onInteractOutside?.(e);
+              }}
             >
               {!title && !description ? (
                 <VisuallyHidden>
@@ -193,3 +209,27 @@ export function Modal(props: ModalProps) {
 }
 
 Modal.displayName = 'Modal';
+
+// Matches Radix layers that use a `DismissableLayer` with
+// `disableOutsidePointerEvents` (Select, DropdownMenu, ContextMenu, Popover).
+// Tooltip is excluded — it has no dismissable layer and matching it would
+// swallow legitimate modal-overlay taps when a tooltip happens to be visible.
+const INNER_LAYER_SELECTOR =
+  '[role="listbox"][data-state="open"],' +
+  '[role="menu"][data-state="open"],' +
+  '[data-radix-popper-content-wrapper]:not(:has([role="tooltip"]))';
+
+function InnerLayerSnapshotter({
+  targetRef,
+}: {
+  targetRef: React.RefObject<boolean>;
+}) {
+  React.useEffect(() => {
+    const handler = () => {
+      targetRef.current = !!document.querySelector(INNER_LAYER_SELECTOR);
+    };
+    document.addEventListener('pointerdown', handler, true);
+    return () => document.removeEventListener('pointerdown', handler, true);
+  }, [targetRef]);
+  return null;
+}

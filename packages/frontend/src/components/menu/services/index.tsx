@@ -1,10 +1,12 @@
 'use client';
-import { useState, useEffect } from 'react';
 import { PageWrapper } from '../../shared/page-wrapper';
+import { useSubTab } from '@/context/sub-tab';
 import { PageControls } from '../../shared/page-controls';
 import { MenuTabs } from '../../shared/menu-tabs';
 import { useMode } from '@/context/mode';
 import { FiServer, FiSettings, FiDatabase, FiImage } from 'react-icons/fi';
+import { useParentInheritance } from '@/context/userData';
+import { InheritedBadge } from '../../shared/inherited-badge';
 import { StreamServices } from './_components/stream-services';
 import { BuiltinSettings } from './_components/builtin-settings';
 import { MetadataServices } from './_components/metadata-services';
@@ -20,32 +22,17 @@ export function ServicesMenu() {
 
 function Content() {
   const { mode } = useMode();
-  const [activeTab, setActiveTab] = useState('services');
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tab = params.get('service-tab');
-    if (tab && ['services', 'builtin', 'metadata', 'posters'].includes(tab)) {
-      setActiveTab(tab);
-    }
-  }, []);
-
-  const handleTabChange = (value: string) => {
-    setActiveTab(value);
-    const params = new URLSearchParams(window.location.search);
-    params.set('service-tab', value);
-    window.history.replaceState(
-      {},
-      '',
-      `${window.location.pathname}?${params.toString()}`
-    );
-  };
+  const { isInherited, hasParent } = useParentInheritance();
+  const { tab: activeTab, setTab: handleTabChange } = useSubTab('services');
 
   return (
     <>
       <div className="flex items-center w-full">
         <div>
-          <h2>Services</h2>
+          <div className="flex items-center gap-2">
+            <h2>Services</h2>
+            {hasParent && isInherited('services') && <InheritedBadge section="services" />}
+          </div>
           <p className="text-[--muted]">
             Configure your debrid, metadata, and poster services.
           </p>

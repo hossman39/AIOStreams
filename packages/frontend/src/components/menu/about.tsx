@@ -285,6 +285,15 @@ AIOStreams consolidates multiple Stremio addons and debrid services - including 
     templateUpdateModal.open();
   }, [loader.appliedTemplateUpdates, uuid, password]);
 
+  // Remove a template from the in-modal list and close the modal if it empties.
+  const consumeUpdateTarget = (templateId: string) => {
+    setUpdateTargets((prev) => {
+      const next = prev.filter((u) => u.template.metadata.id !== templateId);
+      if (next.length === 0) templateUpdateModal.close();
+      return next;
+    });
+  };
+
   // Persist dismissal of a specific template's update notification.
   const dismissUpdate = (templateId: string, toVersion: string) => {
     setUserData((prev) => ({
@@ -293,16 +302,19 @@ AIOStreams consolidates multiple Stremio addons and debrid services - including 
         t.id === templateId ? { ...t, dismissedVersion: toVersion } : t
       ),
     }));
+    consumeUpdateTarget(templateId);
   };
 
-  // Permanently silence update notifications for a template.
-  const ignoreTemplateUpdates = (templateId: string) => {
+  // Drop the applied-template entry entirely so future updates are never surfaced.
+  // Also handles the orphan case where the user has since reconfigured away from it.
+  const forgetAppliedTemplate = (templateId: string) => {
     setUserData((prev) => ({
       ...prev,
-      appliedTemplates: (prev.appliedTemplates ?? []).map((t) =>
-        t.id === templateId ? { ...t, ignored: true } : t
+      appliedTemplates: (prev.appliedTemplates ?? []).filter(
+        (t) => t.id !== templateId
       ),
     }));
+    consumeUpdateTarget(templateId);
   };
 
   // Dismiss all currently-shown update notifications and close the modal.
@@ -762,7 +774,7 @@ AIOStreams consolidates multiple Stremio addons and debrid services - including 
                 <button
                   className="text-xs text-gray-600 hover:text-gray-400 transition-colors underline-offset-2 hover:underline"
                   onClick={() =>
-                    ignoreTemplateUpdates(update.template.metadata.id)
+                    forgetAppliedTemplate(update.template.metadata.id)
                   }
                 >
                   Ignore all future updates for this template

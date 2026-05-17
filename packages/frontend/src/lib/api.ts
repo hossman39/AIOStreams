@@ -247,6 +247,12 @@ export async function loadUserConfig(uuid: string, password: string) {
   );
 }
 
+export async function loadRawUserConfig(uuid: string, password: string) {
+  return api<LoadUserResponse>(
+    `GET /user?uuid=${uuid}&password=${encodeURIComponent(password)}&raw=true`
+  );
+}
+
 /**
  * Create user configuration
  */
@@ -266,6 +272,18 @@ export async function updateUserConfig(
 ) {
   return api<UpdateUserResponse>('PUT /user', {
     body: { uuid, config, password },
+  });
+}
+
+/**
+ * Verify a UUID + password pair (used when linking a parent config)
+ */
+export async function verifyParentConfig(
+  uuid: string,
+  password: string
+): Promise<{ uuid: string; createdAt: string }> {
+  return api<{ uuid: string; createdAt: string }>('POST /user/verify', {
+    body: { uuid, password },
   });
 }
 

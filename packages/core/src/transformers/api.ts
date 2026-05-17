@@ -6,13 +6,17 @@ import {
   SubtitleSchema,
   UserData,
 } from '../db/index.js';
-import { AIOStreamsResponse } from '../main.js';
+import { AIOStreamsResponse } from '../main/types.js';
 import { generateBingeGroup } from './utils.js';
 
 export interface SearchApiResponseData {
   results: SearchApiResult[];
   filtered: number;
   errors: {
+    title: string;
+    description: string;
+  }[];
+  statistics: {
     title: string;
     description: string;
   }[];
@@ -74,7 +78,7 @@ export class ApiTransformer {
   async transformStreams(
     response: AIOStreamsResponse<{
       streams: ParsedStream[];
-      statistics: { title: string; description: string }[];
+      statistics: { title: string; description: string; forced?: boolean }[];
     }>,
     requiredFields: SearchApiResultField[]
   ): Promise<SearchApiResponseData> {
@@ -133,9 +137,34 @@ export class ApiTransformer {
         return hasRequiredFields;
       });
 
+    const statistics = [];
+
+    const forcedStats = data.statistics
+      .filter((s) => s.forced)
+      .map((s) => ({
+        title: s.title,
+        description: s.description,
+      }));
+    const userStats = data.statistics
+      .filter((s) => !s.forced)
+      .map((s) => ({
+        title: s.title,
+        description: s.description,
+      }));
+
+    // Forced stats always surface regardless of user config, but respect position
+    if (forcedStats.length > 0) {
+      statistics.push(...forcedStats);
+    }
+
+    if (this.userData.statistics?.enabled) {
+      statistics.push(...userStats);
+    }
+
     return {
       filtered: filteredCount,
       results,
+      statistics,
       errors: errors.map((error) => ({
         title: error.title ?? '',
         description: error.description ?? '',

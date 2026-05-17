@@ -8,7 +8,7 @@ import {
   Group,
   PresetMetadata,
 } from '../db/schemas.js';
-import { AIOStreams } from '../main.js';
+import { AIOStreams } from '../main/index.js';
 import { Preset, PresetManager } from '../presets/index.js';
 import { createProxy } from '../proxy/index.js';
 import { TMDBMetadata } from '../metadata/tmdb.js';
@@ -28,6 +28,7 @@ import {
   createPosterService,
   APIError,
 } from './index.js';
+import { parseSyncedUrl } from './sync.js';
 import { z, ZodError } from 'zod';
 import {
   ExitConditionEvaluator,
@@ -36,6 +37,7 @@ import {
 } from '../parser/streamExpression.js';
 import { createLogger } from './logger.js';
 import { TVDBMetadata } from '../metadata/tvdb.js';
+import { FIELD_META } from './fieldMeta.js';
 
 const logger = createLogger('core');
 
@@ -43,11 +45,45 @@ export const formatZodError = (error: ZodError) => {
   return z.prettifyError(error);
 };
 
+function parseServiceCredentials(
+  raw: string | undefined
+): Map<string, Map<string, string>> {
+  const result = new Map<string, Map<string, string>>();
+  if (!raw) return result;
+  const normalized = raw.replace(/\\n/g, '\n');
+  for (const line of normalized.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const dotIdx = trimmed.indexOf('.');
+    const eqIdx = trimmed.indexOf('=');
+    if (dotIdx === -1 || eqIdx === -1 || dotIdx > eqIdx) continue;
+    const serviceId = trimmed.slice(0, dotIdx).trim();
+    const credentialId = trimmed.slice(dotIdx + 1, eqIdx).trim();
+    const value = trimmed.slice(eqIdx + 1);
+    if (!serviceId || !credentialId) continue;
+    if (!result.has(serviceId)) result.set(serviceId, new Map());
+    result.get(serviceId)!.set(credentialId, value);
+  }
+  return result;
+}
+
+const parsedDefaultServiceCredentials = parseServiceCredentials(
+  Env.DEFAULT_SERVICE_CREDENTIALS
+);
+const parsedForcedServiceCredentials = parseServiceCredentials(
+  Env.FORCED_SERVICE_CREDENTIALS
+);
+
 function getServiceCredentialDefault(
   serviceId: constants.ServiceId,
   credentialId: string
 ) {
-  // env mapping
+  const fromUnified = parsedDefaultServiceCredentials
+    .get(serviceId)
+    ?.get(credentialId);
+  if (fromUnified !== undefined) return fromUnified;
+
+  // legacy per-service env vars
   switch (serviceId) {
     case constants.REALDEBRID_SERVICE:
       switch (credentialId) {
@@ -140,7 +176,12 @@ function getServiceCredentialForced(
   serviceId: constants.ServiceId,
   credentialId: string
 ) {
-  // env mapping
+  const fromUnified = parsedForcedServiceCredentials
+    .get(serviceId)
+    ?.get(credentialId);
+  if (fromUnified !== undefined) return fromUnified;
+
+  // legacy per-service env vars
   switch (serviceId) {
     case constants.REALDEBRID_SERVICE:
       switch (credentialId) {
@@ -298,6 +339,7 @@ export async function validateConfig(
 
   validateSyncedRegexUrls(config, options?.skipErrorsFromAddonsOrProxies);
   validateSyncedSelUrls(config, options?.skipErrorsFromAddonsOrProxies);
+  validateSyncedPlaceholders(config);
 
   let excludedStreamExpressions: { expression: string; enabled: boolean }[] =
     [];
@@ -459,7 +501,7 @@ export async function validateConfig(
     ...(config.preferredStreamExpressions?.map((e) => e.expression) ?? []),
     ...(config.includedStreamExpressions?.map((e) => e.expression) ?? []),
     ...(config.rankedStreamExpressions?.map((r) => r.expression) ?? []),
-  ];
+  ].filter((expr) => !parseSyncedUrl(expr));
 
   for (const expression of expressionsToValidate) {
     try {
@@ -830,6 +872,14 @@ export function applyMigrations(config: any): UserData {
     });
   }
 
+  if (config.formatter && config.formatter.definition) {
+    config.formatter.definitions = {
+      ...(config.formatter.definitions ?? {}),
+      custom: config.formatter.definition,
+    };
+    delete config.formatter.definition;
+  }
+
   return config;
 }
 
@@ -863,7 +913,7 @@ async function validateRegexes(config: UserData, skipErrors: boolean = false) {
       ...synced.ranked.map((r) => r.pattern),
       ...(config.rankedRegexPatterns || []).map((r) => r.pattern),
     ]),
-  ];
+  ].filter((pattern) => !parseSyncedUrl(pattern));
 
   if (regexes.length === 0) return;
 
@@ -871,7 +921,8 @@ async function validateRegexes(config: UserData, skipErrors: boolean = false) {
 
   if (!regexAllowed) {
     if (!skipErrors) {
-      const allowedPatterns = (await RegexAccess.allowedRegexPatterns()).patterns;
+      const allowedPatterns = (await RegexAccess.allowedRegexPatterns())
+        .patterns;
       const notAllowed = regexes.filter((r) => !allowedPatterns.includes(r));
       if (notAllowed.length === regexes.length) {
         throw new Error(
@@ -913,6 +964,7 @@ function validateSyncedRegexUrls(
     ...(config.syncedExcludedRegexUrls || []),
     ...(config.syncedRequiredRegexUrls || []),
     ...(config.syncedPreferredRegexUrls || []),
+    ...(config.syncedRankedRegexUrls || []),
   ];
 
   const invalidUrls = urlsToCheck.filter((url) => !allowedUrls.includes(url));
@@ -950,6 +1002,92 @@ function validateSyncedSelUrls(config: UserData, skipErrors: boolean = false) {
         `Forbidden URL(s) in stream expression sync configuration: ${invalidUrls.join(', ')}`
       );
     }
+  }
+}
+
+/**
+ * Validate that every `<SYNCED: url>` placeholder in a values array
+ * references a URL present in the corresponding synced URLs array.
+ */
+function validateSyncedPlaceholders(config: UserData) {
+  const checks: {
+    valuesKey: keyof UserData;
+    syncedKey: keyof UserData;
+    extract: (item: any) => string;
+  }[] = [
+    {
+      valuesKey: 'excludedRegexPatterns',
+      syncedKey: 'syncedExcludedRegexUrls',
+      extract: (v) => v,
+    },
+    {
+      valuesKey: 'includedRegexPatterns',
+      syncedKey: 'syncedIncludedRegexUrls',
+      extract: (v) => v,
+    },
+    {
+      valuesKey: 'requiredRegexPatterns',
+      syncedKey: 'syncedRequiredRegexUrls',
+      extract: (v) => v,
+    },
+    {
+      valuesKey: 'preferredRegexPatterns',
+      syncedKey: 'syncedPreferredRegexUrls',
+      extract: (v) => v.pattern,
+    },
+    {
+      valuesKey: 'rankedRegexPatterns',
+      syncedKey: 'syncedRankedRegexUrls',
+      extract: (v) => v.pattern,
+    },
+    {
+      valuesKey: 'excludedStreamExpressions',
+      syncedKey: 'syncedExcludedStreamExpressionUrls',
+      extract: (v) => v.expression,
+    },
+    {
+      valuesKey: 'includedStreamExpressions',
+      syncedKey: 'syncedIncludedStreamExpressionUrls',
+      extract: (v) => v.expression,
+    },
+    {
+      valuesKey: 'requiredStreamExpressions',
+      syncedKey: 'syncedRequiredStreamExpressionUrls',
+      extract: (v) => v.expression,
+    },
+    {
+      valuesKey: 'preferredStreamExpressions',
+      syncedKey: 'syncedPreferredStreamExpressionUrls',
+      extract: (v) => v.expression,
+    },
+    {
+      valuesKey: 'rankedStreamExpressions',
+      syncedKey: 'syncedRankedStreamExpressionUrls',
+      extract: (v) => v.expression,
+    },
+  ];
+
+  const invalid: string[] = [];
+
+  for (const { valuesKey, syncedKey, extract } of checks) {
+    const values = (config as any)[valuesKey] as any[] | undefined;
+    if (!values?.length) continue;
+
+    const syncedUrls = new Set<string>((config as any)[syncedKey] ?? []);
+
+    for (const entry of values) {
+      const field = extract(entry);
+      const url = parseSyncedUrl(field);
+      if (url && !syncedUrls.has(url)) {
+        invalid.push(url);
+      }
+    }
+  }
+
+  if (invalid.length > 0) {
+    throw new Error(
+      `Found synced placeholder(s) referencing URL(s) not in the synced URLs list: ${invalid.join(', ')}`
+    );
   }
 }
 
@@ -1312,4 +1450,262 @@ async function validateProxy(
     }
   }
   return proxy;
+}
+
+// ---------------------------------------------------------------------------
+// Config inheritance / parent merging
+// ---------------------------------------------------------------------------
+
+// prettier-ignore
+const FILTER_FIELDS: (keyof UserData)[] = [
+  'excludedResolutions', 'includedResolutions', 'requiredResolutions', 'preferredResolutions',
+  'excludedQualities', 'includedQualities', 'requiredQualities', 'preferredQualities',
+  'excludedLanguages', 'includedLanguages', 'requiredLanguages', 'preferredLanguages',
+  'excludedSubtitles', 'includedSubtitles', 'requiredSubtitles', 'preferredSubtitles',
+  'excludedVisualTags', 'includedVisualTags', 'requiredVisualTags', 'preferredVisualTags',
+  'excludedAudioTags', 'includedAudioTags', 'requiredAudioTags', 'preferredAudioTags',
+  'excludedAudioChannels', 'includedAudioChannels', 'requiredAudioChannels', 'preferredAudioChannels',
+  'excludedStreamTypes', 'includedStreamTypes', 'requiredStreamTypes', 'preferredStreamTypes',
+  'excludedEncodes', 'includedEncodes', 'requiredEncodes', 'preferredEncodes',
+  'excludedRegexPatterns', 'includedRegexPatterns', 'requiredRegexPatterns',
+  'preferredRegexPatterns', 'rankedRegexPatterns', 'regexOverrides', 'selOverrides',
+  'syncedPreferredRegexUrls', 'syncedExcludedRegexUrls', 'syncedIncludedRegexUrls',
+  'syncedRequiredRegexUrls', 'syncedRankedRegexUrls',
+  'syncedPreferredStreamExpressionUrls', 'syncedExcludedStreamExpressionUrls',
+  'syncedIncludedStreamExpressionUrls', 'syncedRequiredStreamExpressionUrls',
+  'syncedRankedStreamExpressionUrls',
+  'excludedStreamExpressions', 'requiredStreamExpressions', 'preferredStreamExpressions',
+  'includedStreamExpressions', 'rankedStreamExpressions',
+  'excludedKeywords', 'includedKeywords', 'requiredKeywords', 'preferredKeywords',
+  'excludedReleaseGroups', 'includedReleaseGroups', 'requiredReleaseGroups', 'preferredReleaseGroups',
+  'enableSeadex', 'excludeSeasonPacks',
+  'excludeCached', 'excludeCachedFromAddons', 'excludeCachedFromServices',
+  'excludeCachedFromStreamTypes', 'excludeCachedMode',
+  'excludeUncached', 'excludeUncachedFromAddons', 'excludeUncachedFromServices',
+  'excludeUncachedFromStreamTypes', 'excludeUncachedMode',
+  'excludeSeederRange', 'includeSeederRange', 'requiredSeederRange', 'seederRangeTypes',
+  'excludeAgeRange', 'includeAgeRange', 'requiredAgeRange', 'ageRangeTypes',
+  'digitalReleaseFilter', 'size', 'bitrate', 'titleMatching', 'yearMatching', 'seasonEpisodeMatching'
+];
+
+// prettier-ignore
+const SORTING_FIELDS: (keyof UserData)[] = [
+  'sortCriteria', 'deduplicator', 'resultLimits',
+];
+
+// prettier-ignore
+const FORMATTER_FIELDS: (keyof UserData)[] = [
+  'formatter',
+];
+
+// prettier-ignore
+const PROXY_FIELDS: (keyof UserData)[] = [
+  'proxy',
+];
+
+// prettier-ignore
+const METADATA_FIELDS: (keyof UserData)[] = [
+  'tmdbApiKey', 'tmdbAccessToken', 'tvdbApiKey',
+  'rpdbApiKey', 'topPosterApiKey', 'aioratingsApiKey', 'aioratingsProfileId',
+  'openposterdbApiKey', 'openposterdbUrl', 'posterService',
+  'usePosterRedirectApi', 'usePosterServiceForMeta',
+];
+
+// prettier-ignore
+const MISC_FIELDS: (keyof UserData)[] = [
+  'autoPlay', 'areYouStillThere', 'statistics', 'dynamicAddonFetching',
+  'nzbFailover', 'serviceWrap', 'cacheAndPlay', 'preloadStreams', 'precacheSelector',
+  'hideErrors', 'hideErrorsForResources', 'addonCategoryColors', 'catalogModifications', 'mergedCatalogs',
+  'addonPassword', 'externalDownloads', 'autoRemoveDownloads', 'checkOwned', 'showChanges',
+  'randomiseResults', 'enhanceResults', 'enhancePosters',
+];
+
+// prettier-ignore
+const BRANDING_FIELDS: (keyof UserData)[] = [
+  'addonName', 'addonLogo', 'addonBackground', 'addonDescription',
+];
+
+// Personal fields are never inherited — always use the child's own values.
+// Includes per-user identity and per-instance state that has no meaning across configs.
+// prettier-ignore
+const PERSONAL_FIELDS: (keyof UserData)[] = [
+  'appliedTemplates',
+];
+
+/**
+ * Merges two arrays using "override by identity" semantics:
+ * - Parent entries are the base.
+ * - Child entries whose identity matches a parent entry replace it.
+ * - Child entries with no matching parent entry are appended.
+ * - For primitive arrays (no identityKey), deduplication by value is used.
+ */
+function extendList(
+  parentArr: any[],
+  childArr: any[],
+  identityKey?: string
+): any[] {
+  if (!identityKey) {
+    const seen = new Set(parentArr);
+    const result = [...parentArr];
+    for (const item of childArr) {
+      if (!seen.has(item)) {
+        result.push(item);
+        seen.add(item);
+      }
+    }
+    return result;
+  }
+  const merged = [...parentArr];
+  for (const item of childArr) {
+    const idx = merged.findIndex((p) => p[identityKey] === item[identityKey]);
+    if (idx >= 0) merged[idx] = item;
+    else merged.push(item);
+  }
+  return merged;
+}
+
+function applyBinarySection(
+  result: UserData,
+  parent: UserData,
+  strategy: 'inherit' | 'override',
+  fields: (keyof UserData)[]
+): void {
+  if (strategy !== 'inherit') return;
+  for (const field of fields) {
+    if (parent[field] !== undefined) {
+      (result as any)[field] = parent[field];
+    } else {
+      delete (result as any)[field];
+    }
+  }
+}
+
+export function mergeConfigs(parent: UserData, child: UserData): UserData {
+  const strategies = child.parentConfig?.mergeStrategies;
+  const result: UserData = { ...child };
+
+  // Presets & groups
+  const presetsMerge = strategies?.presets ?? 'inherit';
+  if (presetsMerge === 'inherit') {
+    result.presets = parent.presets;
+    result.groups = parent.groups;
+  } else if (presetsMerge === 'extend') {
+    const merged = [...(parent.presets ?? [])];
+    for (const cp of child.presets ?? []) {
+      const idx = merged.findIndex((p) => p.instanceId === cp.instanceId);
+      if (idx >= 0) merged[idx] = cp;
+      else merged.push(cp);
+    }
+    result.presets = merged;
+    result.groups = child.groups ?? parent.groups;
+  }
+  // 'override': keep child's presets already in result
+
+  // Services
+  const servicesMerge = strategies?.services ?? 'inherit';
+  if (servicesMerge === 'inherit') {
+    result.services = parent.services;
+  } else if (servicesMerge === 'extend') {
+    const merged = [...(parent.services ?? [])];
+    for (const cs of child.services ?? []) {
+      if (cs.enabled === false) continue;
+      const idx = merged.findIndex((s) => s.id === cs.id);
+      if (idx >= 0) {
+        merged[idx] = cs;
+      } else {
+        merged.push(cs);
+      }
+    }
+    result.services = merged;
+  }
+  // 'override': keep child's services already in result
+
+  applyBinarySection(
+    result,
+    parent,
+    strategies?.filters ?? 'inherit',
+    FILTER_FIELDS
+  );
+  applyBinarySection(
+    result,
+    parent,
+    strategies?.sorting ?? 'inherit',
+    SORTING_FIELDS
+  );
+  applyBinarySection(
+    result,
+    parent,
+    strategies?.formatter ?? 'inherit',
+    FORMATTER_FIELDS
+  );
+  applyBinarySection(
+    result,
+    parent,
+    strategies?.proxy ?? 'inherit',
+    PROXY_FIELDS
+  );
+  applyBinarySection(
+    result,
+    parent,
+    strategies?.metadata ?? 'inherit',
+    METADATA_FIELDS
+  );
+  applyBinarySection(
+    result,
+    parent,
+    strategies?.misc ?? 'inherit',
+    MISC_FIELDS
+  );
+  applyBinarySection(
+    result,
+    parent,
+    strategies?.branding ?? 'inherit',
+    BRANDING_FIELDS
+  );
+
+  // Personal fields always come from the child regardless of merge strategies.
+  for (const field of PERSONAL_FIELDS) {
+    if (child[field] !== undefined) {
+      (result as any)[field] = child[field];
+    } else {
+      delete (result as any)[field];
+    }
+  }
+
+  // Per-field overrides - applied last so they win over group strategies.
+  const fieldOverrides = strategies?.fieldOverrides ?? {};
+  for (const [fieldKey, override] of Object.entries(fieldOverrides)) {
+    const field = fieldKey as keyof typeof FIELD_META;
+    const meta = FIELD_META[field];
+    if (!meta || meta.ignoreForParentConfig) continue;
+
+    if (override === 'inherit') {
+      if (parent[field] !== undefined) {
+        (result as any)[field] = parent[field];
+      } else {
+        delete (result as any)[field];
+      }
+    } else if (override === 'override') {
+      if (child[field] !== undefined) {
+        (result as any)[field] = child[field];
+      } else {
+        delete (result as any)[field];
+      }
+    } else if (override === 'extend') {
+      if (meta.type !== 'list') continue; // extend is only valid for list fields
+      const parentVal = (parent[field] as any[] | undefined) ?? [];
+      const childVal = (child[field] as any[] | undefined) ?? [];
+      if (parentVal.length === 0 && childVal.length === 0) {
+        delete (result as any)[field];
+      } else {
+        (result as any)[field] = extendList(
+          parentVal,
+          childVal,
+          meta.identityKey
+        );
+      }
+    }
+  }
+
+  return result;
 }

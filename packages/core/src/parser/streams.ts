@@ -5,10 +5,16 @@ import {
   createLogger,
   Env,
   FULL_LANGUAGE_MAPPING,
+  getLanguageDisplayName,
 } from '../utils/index.js';
 import FileParser from './file.js';
-import { parseAgeString, parseDuration } from './utils.js';
+import {
+  parseAgeString,
+  parseDuration,
+  extractInfoHashFromMagnet,
+} from './utils.js';
 import { mergeParsedFiles, arrayMerge } from './merge.js';
+
 const logger = createLogger('parser');
 
 class StreamParser {
@@ -69,6 +75,10 @@ class StreamParser {
       return { skip: true };
     }
     stream.description = stream.description || stream.title;
+    if (stream.url && stream.url.startsWith('magnet:')) {
+      stream.infoHash = extractInfoHashFromMagnet(stream.url);
+      stream.url = undefined;
+    }
 
     let parsedStream: ParsedStream = {
       id: this.getRandomId(),
@@ -503,7 +513,6 @@ class StreamParser {
       return 'debrid';
     }
 
-    // return 'http';
     if (stream.url) {
       return 'http';
     }
@@ -528,6 +537,13 @@ class StreamParser {
       return 'archive';
     }
     throw new Error('Invalid stream, missing a required stream property');
+  }
+
+  protected getParsedFileMergeOverrides(
+    stream: Stream,
+    currentParsedStream: ParsedStream
+  ): Partial<ParsedFile> {
+    return {};
   }
 
   /**
@@ -559,6 +575,7 @@ class StreamParser {
         arrayMerge(folderParsed?.languages, fileParsed?.languages),
         this.getLanguages(stream, parsedStream)
       ),
+      ...this.getParsedFileMergeOverrides(stream, parsedStream),
     });
 
     if (!merged) return undefined;
@@ -600,34 +617,30 @@ class StreamParser {
       ...(nameMatches ? [...new Set(nameMatches)] : []),
     ];
     const languages = flags
-      .map((flag) => {
-        const possibleLanguages = FULL_LANGUAGE_MAPPING.filter(
-          (language) => language.flag === flag
-        );
-
-        const language =
-          possibleLanguages.find((l) => l.flag_priority) ||
-          possibleLanguages[0];
-        const languageName = (
-          language?.internal_english_name || language?.english_name
-        )
-          ?.split('(')?.[0]
-          ?.trim();
-
-        if (languageName && constants.LANGUAGES.includes(languageName as any)) {
-          return languageName;
-        }
-        return undefined;
-      })
+      .map((flag) => this.convertFlagToLanguage(flag))
       .filter((language) => language !== undefined);
     return languages;
+  }
+
+  protected convertFlagToLanguage(flag: string): string | undefined {
+    const possibleLanguages = FULL_LANGUAGE_MAPPING.filter(
+      (language) => language.flag === flag
+    );
+
+    const language =
+      possibleLanguages.find((l) => l.flag_priority) || possibleLanguages[0];
+    if (!language) return undefined;
+    const languageName = getLanguageDisplayName(language);
+    return constants.LANGUAGES.includes(languageName as any)
+      ? languageName
+      : undefined;
   }
 
   protected convertISO6392ToLanguage(code: string): string | undefined {
     const lang = FULL_LANGUAGE_MAPPING.find(
       (language) => language.iso_639_2 === code
     );
-    return lang?.english_name?.split('(')?.[0]?.trim();
+    return lang ? getLanguageDisplayName(lang) : undefined;
   }
 
   protected getInLibrary(
@@ -675,13 +688,13 @@ class StreamParser {
   ): ParsedStream['service'] | undefined {
     const cleanString = string.replace(/web-?dl/i, '');
     const services = constants.SERVICE_DETAILS;
-    const cachedSymbols = ['+', '⚡', '🚀', 'cached', '🌩️'];
+    const cachedSymbols = ['+', '⚡', '🚀', 'cached', '🌩️', '📫'];
     const uncachedSymbols = ['⏳', 'download', 'UNCACHED', '☁️'];
     let streamService: ParsedStream['service'] | undefined;
     Object.values(services).forEach((service) => {
       // for each service, generate a regexp which creates a regex with all known names separated by |
       const regex = new RegExp(
-        `(^|(?<![^ |[(_\\/\\-.]))(${service.knownNames.join('|')})(?=[ ⬇️⏳⚡☁️🌩️+/|\\)\\]_.-]|$|\n)`,
+        `(^|(?<![^ |[(_\\/\\-.]))(${service.knownNames.join('|')})(?=[ ⬇️⏳⚡☁️🌩️📫+/|\\)\\]_.-]|$|\n)`,
         'im'
       );
       // check if the string contains the regex

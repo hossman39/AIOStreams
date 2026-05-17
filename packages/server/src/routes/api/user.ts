@@ -57,9 +57,10 @@ router.head('/', async (req, res, next) => {
 
 // getting user details
 router.get('/', async (req, res, next) => {
-  const { uuid, password } = {
+  const { uuid, password, raw } = {
     uuid: req.uuid || req.query.uuid,
     password: req.query.password,
+    raw: req.query.raw,
   };
   if (typeof uuid !== 'string' || typeof password !== 'string') {
     next(
@@ -73,7 +74,10 @@ router.get('/', async (req, res, next) => {
   }
   let userData = null;
   try {
-    userData = await UserRepository.getUser(uuid, password);
+    userData =
+      raw === 'true'
+        ? await UserRepository.getRawUser(uuid, password)
+        : await UserRepository.getUser(uuid, password);
   } catch (error: any) {
     if (error instanceof APIError) {
       next(error);
@@ -214,7 +218,6 @@ router.delete('/', async (req, res, next) => {
   }
 });
 
-
 // change password
 router.post('/password', async (req, res, next) => {
   const { uuid, currentPassword, newPassword } = {
@@ -254,6 +257,38 @@ router.post('/password', async (req, res, next) => {
       next(error);
     } else {
       logger.error(error);
+      next(new APIError(constants.ErrorCode.INTERNAL_SERVER_ERROR));
+    }
+  }
+});
+
+// verify a UUID + password pair (used when linking a parent config)
+router.post('/verify', async (req, res, next) => {
+  const { uuid, password } = req.body;
+  if (typeof uuid !== 'string' || typeof password !== 'string') {
+    next(
+      new APIError(
+        constants.ErrorCode.MISSING_REQUIRED_FIELDS,
+        undefined,
+        'uuid and password must be strings'
+      )
+    );
+    return;
+  }
+
+  try {
+    const { createdAt } = await UserRepository.verifyUser(uuid, password);
+    res.status(200).json(
+      createResponse({
+        success: true,
+        detail: 'Credentials verified successfully',
+        data: { uuid, createdAt },
+      })
+    );
+  } catch (error) {
+    if (error instanceof APIError) {
+      next(error);
+    } else {
       next(new APIError(constants.ErrorCode.INTERNAL_SERVER_ERROR));
     }
   }

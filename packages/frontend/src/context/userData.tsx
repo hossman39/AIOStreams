@@ -233,6 +233,14 @@ export function applyMigrations(config: any): UserData {
     });
   }
 
+  if (config.formatter && config.formatter.definition) {
+    config.formatter.definitions = {
+      ...(config.formatter.definitions ?? {}),
+      custom: config.formatter.definition,
+    };
+    delete config.formatter.definition;
+  }
+
   return config;
 }
 
@@ -340,6 +348,10 @@ export const DefaultUserData: UserData = {
         direction: 'desc',
       },
       {
+        key: 'subtitle',
+        direction: 'desc',
+      },
+      {
         key: 'size',
         direction: 'desc',
       },
@@ -374,12 +386,14 @@ export const DefaultUserData: UserData = {
     enabled: false,
     position: 'bottom',
     statsToShow: ['addon', 'filter', 'timing'],
+    showFilterStatsOnNoStreams: true,
   },
   digitalReleaseFilter: {
     enabled: false,
     tolerance: 0,
     requestTypes: [],
     addons: [],
+    showInfoOnFilter: true,
   },
   ageRangeTypes: ['usenet'],
   seasonEpisodeMatching: {
@@ -532,4 +546,32 @@ export function useUserData() {
     throw new Error('useUserData must be used within a UserDataProvider');
   }
   return context;
+}
+
+export function useParentInheritance() {
+  const { userData } = useUserData();
+  const parentConfig = userData?.parentConfig;
+  const strategies = parentConfig?.mergeStrategies;
+
+  function isInherited(
+    section:
+      | 'presets'
+      | 'services'
+      | 'filters'
+      | 'sorting'
+      | 'formatter'
+      | 'proxy'
+      | 'metadata'
+      | 'misc'
+  ): boolean {
+    if (!parentConfig) return false;
+    const strategy = strategies?.[section] ?? 'inherit';
+    return strategy === 'inherit';
+  }
+
+  return {
+    hasParent: !!parentConfig,
+    parentUuid: parentConfig?.uuid,
+    isInherited,
+  };
 }

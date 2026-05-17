@@ -12,6 +12,7 @@ import { PASSTHROUGH_STAGES } from '../utils/constants.js';
 import { parseBitrate } from './utils.js';
 import { createLogger } from '../utils/logger.js';
 import { ExpressionContext } from '../streams/context.js';
+import { formRegexFromKeywordsSync } from '../utils/regex.js';
 
 const logger = createLogger('stream-expression');
 
@@ -460,6 +461,106 @@ export abstract class StreamExpressionEngine {
         return true;
       });
     };
+
+    // Filter streams by one or more keywords, restricted to the specified
+    // stream attribute(s). Uses the same regex shape as the Keyword UI
+    // filters (Required / Excluded / Included / Preferred Keywords) so the
+    // matching behavior is identical -- the only difference is that the user
+    // chooses which attributes to test against.
+    //
+    // `attributes` is a comma-separated string of attribute names. Allowed
+    // values: 'filename', 'folderName', 'indexer', 'releaseGroup' (the same
+    // set the Keyword UI filters check). Use 'all' or '*' to match every
+    // attribute.
+    this.parser.functions.keyword = function (
+      streams: ParsedStream[],
+      attributes: string,
+      ...keywords: string[]
+    ) {
+      const ALLOWED_ATTRIBUTES = [
+        'filename',
+        'folderName',
+        'indexer',
+        'releaseGroup',
+      ] as const;
+      type KeywordAttribute = (typeof ALLOWED_ATTRIBUTES)[number];
+
+      if (!Array.isArray(streams) || streams.some((stream) => !stream.type)) {
+        throw new Error('Your streams input must be an array of streams');
+      }
+      if (typeof attributes !== 'string' || attributes.trim().length === 0) {
+        throw new Error(
+          "keyword: attributes must be a non-empty string (comma-separated, or 'all' / '*')"
+        );
+      }
+      if (
+        keywords.length === 0 ||
+        keywords.some((k) => typeof k !== 'string')
+      ) {
+        throw new Error(
+          'keyword: you must provide one or more keyword string parameters'
+        );
+      }
+
+      const trimmed = attributes.trim();
+      let resolved: KeywordAttribute[];
+      if (trimmed === '*' || trimmed.toLowerCase() === 'all') {
+        resolved = [...ALLOWED_ATTRIBUTES];
+      } else {
+        resolved = [];
+        const seen = new Set<KeywordAttribute>();
+        for (const part of trimmed
+          .split(',')
+          .map((p) => p.trim())
+          .filter((p) => p.length > 0)) {
+          const match = ALLOWED_ATTRIBUTES.find(
+            (attr) => attr.toLowerCase() === part.toLowerCase()
+          );
+          if (!match) {
+            throw new Error(
+              `keyword: invalid attribute '${part}'. Allowed values: ${ALLOWED_ATTRIBUTES.join(
+                ', '
+              )} (or 'all' / '*' for all)`
+            );
+          }
+          if (!seen.has(match)) {
+            seen.add(match);
+            resolved.push(match);
+          }
+        }
+        if (resolved.length === 0) {
+          throw new Error(
+            'keyword: attributes must contain at least one attribute name'
+          );
+        }
+      }
+
+      const pattern = formRegexFromKeywordsSync(keywords);
+      return streams.filter((stream) => {
+        for (const attribute of resolved) {
+          let value: string | undefined;
+          switch (attribute) {
+            case 'filename':
+              value = stream.filename;
+              break;
+            case 'folderName':
+              value = stream.folderName;
+              break;
+            case 'indexer':
+              value = stream.indexer;
+              break;
+            case 'releaseGroup':
+              value = stream.parsedFile?.releaseGroup;
+              break;
+          }
+          if (value !== undefined && pattern.test(value)) {
+            return true;
+          }
+        }
+        return false;
+      });
+    };
+    this.parser.functions.keywords = this.parser.functions.keyword;
 
     this.parser.functions.seMatched = function (
       streams: ParsedStream[],
@@ -972,6 +1073,23 @@ export abstract class StreamExpressionEngine {
             stream.parsedFile?.seasons.length > 0 &&
             (!stream.parsedFile.episodes ||
               !stream.parsedFile?.episodes?.length)
+      );
+    };
+
+    this.parser.functions.multiEpisode = function (
+      streams: ParsedStream[],
+      minEpisodes: number = 2
+    ) {
+      if (!Array.isArray(streams) || streams.some((stream) => !stream.type)) {
+        throw new Error('Your streams input must be an array of streams');
+      } else if (typeof minEpisodes !== 'number' || minEpisodes < 1) {
+        throw new Error('minEpisodes must be a positive number');
+      }
+
+      return streams.filter(
+        (stream) =>
+          stream.parsedFile?.episodes &&
+          stream.parsedFile.episodes.length >= minEpisodes
       );
     };
 
@@ -1578,7 +1696,11 @@ export function extractNamesFromExpression(
   let match;
   while ((match = regex.exec(expression)) !== null) {
     const content = match[1];
-    if (!content.startsWith('#') || !ignoreHashPrefixed) {
+    if (content.startsWith('#')) {
+      if (!ignoreHashPrefixed) {
+        names.push(content.slice(1).trim());
+      }
+    } else {
       names.push(content);
     }
   }

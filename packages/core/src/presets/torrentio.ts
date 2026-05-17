@@ -161,6 +161,10 @@ export class TorrentioPreset extends Preset {
       label: 'AniDex',
     },
     {
+      value: 'nekobt',
+      label: 'NekoBT',
+    },
+    {
       value: 'rutor',
       label: 'Rutor',
     },
@@ -175,6 +179,10 @@ export class TorrentioPreset extends Preset {
     {
       value: 'bludv',
       label: 'BluDV',
+    },
+    {
+      value: 'micoleaodublado',
+      label: 'MicoLeaoDublado',
     },
     {
       value: 'torrent9',
@@ -227,7 +235,8 @@ export class TorrentioPreset extends Preset {
       ...baseOptions(
         'Torrentio',
         supportedResources,
-        Env.DEFAULT_TORRENTIO_TIMEOUT
+        Env.DEFAULT_TORRENTIO_TIMEOUT,
+        Env.TORRENTIO_URL
       ),
       {
         id: 'providers',
@@ -293,8 +302,8 @@ export class TorrentioPreset extends Preset {
     return {
       ID: 'torrentio',
       NAME: 'Torrentio',
-      LOGO: `${Env.TORRENTIO_URL}/images/logo_v1.png`,
-      URL: Env.TORRENTIO_URL,
+      LOGO: `${Env.TORRENTIO_URL[0]}/images/logo_v1.png`,
+      URL: Env.TORRENTIO_URL[0],
       TIMEOUT: Env.DEFAULT_TORRENTIO_TIMEOUT || Env.DEFAULT_TIMEOUT,
       USER_AGENT: Env.DEFAULT_TORRENTIO_USER_AGENT || Env.DEFAULT_USER_AGENT,
       SUPPORTED_SERVICES: supportedServices,

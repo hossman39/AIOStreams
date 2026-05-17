@@ -1,5 +1,5 @@
 import * as constants from './constants.js';
-import { FULL_LANGUAGE_MAPPING } from './languages.js';
+import { normaliseLanguage, normaliseLangCode } from './languages.js';
 
 export interface ParsedMediaInfo {
   languages?: string[];
@@ -11,18 +11,21 @@ export interface ParsedMediaInfo {
   bitrate?: number;
   encode?: string;
   resolution?: string;
+  hasChapters?: boolean;
 }
 
 type MediaInfoAudioTrack = {
   codec?: unknown;
   profile?: unknown;
   lang?: unknown;
+  title?: unknown;
   ch_layout?: unknown;
   ch?: unknown;
 };
 
 type MediaInfoSubtitleTrack = {
   lang?: unknown;
+  title?: unknown;
 };
 
 type MediaInfoVideo = {
@@ -47,32 +50,32 @@ export type MediaInfo = {
   has_chapters?: boolean;
 };
 
-const LANGUAGE_ALIAS_MAP: Record<string, string> = {
-  fre: 'fra',
-  ger: 'deu',
-  cze: 'ces',
-  slo: 'slk',
-  rum: 'ron',
-  dut: 'nld',
-  gre: 'ell',
-  alb: 'sqi',
-  baq: 'eus',
-  bur: 'mya',
-  chi: 'zho',
-  per: 'fas',
-  arm: 'hye',
-  geo: 'kat',
-  ice: 'isl',
-  mac: 'mkd',
-  mao: 'mri',
-  may: 'msa',
-  tib: 'bod',
-  wel: 'cym',
-};
+const TITLE_LANG_OVERRIDES: Array<{
+  lang: string;
+  pattern: RegExp;
+  override: string;
+}> = [
+  { lang: 'spa', pattern: /latin/i, override: 'es-MX' },
+  { lang: 'por', pattern: /brazilian/i, override: 'pt-BR' },
+];
 
-const LANGUAGE_BY_NAME = new Map<string, string>(
-  constants.LANGUAGES.map((lang) => [lang.toLowerCase(), lang])
-);
+function applyTitleOverride(
+  normalisedLang: string,
+  title: string | undefined
+): string {
+  if (!title) return normalisedLang;
+  const match = TITLE_LANG_OVERRIDES.find(
+    (entry) => entry.lang === normalisedLang && entry.pattern.test(title)
+  );
+  return match ? match.override : normalisedLang;
+}
+
+function resolveTrackLang(lang: unknown, title: unknown): string | undefined {
+  if (typeof lang !== 'string') return undefined;
+  const normCode = normaliseLangCode(lang);
+  const titleStr = typeof title === 'string' ? title : undefined;
+  return applyTitleOverride(normCode, titleStr);
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -81,56 +84,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function asMediaInfo(value: unknown): MediaInfo | undefined {
   if (!isObject(value)) return undefined;
   return value as MediaInfo;
-}
-
-function normaliseLanguageCode(code: string): string {
-  const lower = code.toLowerCase().trim();
-  if (!lower) return lower;
-  return LANGUAGE_ALIAS_MAP[lower] ?? lower;
-}
-
-export function normaliseLanguage(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const raw = value.trim();
-  if (!raw) return undefined;
-
-  const byName = LANGUAGE_BY_NAME.get(raw.toLowerCase());
-  if (byName) return byName;
-
-  const code = normaliseLanguageCode(raw);
-  const parts = code.split('-');
-
-  const possible = FULL_LANGUAGE_MAPPING.filter((lang) => {
-    if (parts.length === 2) {
-      return (
-        lang.iso_639_1?.toLowerCase() === parts[0] &&
-        lang.iso_3166_1?.toLowerCase() === parts[1]
-      );
-    }
-
-    return (
-      lang.iso_639_1?.toLowerCase() === parts[0] ||
-      lang.iso_639_2?.toLowerCase() === parts[0]
-    );
-  });
-
-  const chosen = possible.find((lang) => lang.flag_priority) ?? possible[0];
-  if (!chosen) return undefined;
-
-  const candidate = (chosen.internal_english_name || chosen.english_name)
-    ?.split(/;|\(/)[0]
-    ?.trim();
-
-  if (
-    candidate &&
-    constants.LANGUAGES.includes(
-      candidate as (typeof constants.LANGUAGES)[number]
-    )
-  ) {
-    return candidate;
-  }
-
-  return undefined;
 }
 
 function normaliseLanguageList(values: unknown[]): string[] {
@@ -228,24 +181,35 @@ function normaliseEncode(
 }
 
 function normaliseResolution(
-  height: unknown,
-  width: unknown
+  width: unknown,
+  height: unknown
 ): string | undefined {
-  const numericHeight = typeof height === 'number' ? height : undefined;
-  const numericWidth = typeof width === 'number' ? width : undefined;
+  const h =
+    typeof height === 'number' && height > 0 ? Math.round(height) : undefined;
+  const w =
+    typeof width === 'number' && width > 0 ? Math.round(width) : undefined;
 
-  const candidates = [numericHeight, numericWidth]
-    .filter((value): value is number => typeof value === 'number' && value > 0)
-    .map((value) => Math.round(value));
+  if (!h && !w) return undefined;
 
-  if (candidates.length === 0) return undefined;
+  const heightLevels = [2160, 1440, 1080, 720, 576, 480, 360, 240, 144];
 
-  const detected = Math.min(...candidates);
-  const levels = [2160, 1440, 1080, 720, 576, 480, 360, 240, 144];
-  const closest = levels.reduce((prev, curr) =>
-    Math.abs(curr - detected) < Math.abs(prev - detected) ? curr : prev
+  if (h && w) {
+    const widthThresholds = [3840, 2560, 1920, 1280, 1024, 854, 640, 426, 256];
+    const idx = widthThresholds.reduce(
+      (bestIdx, wLevel, i) =>
+        Math.abs(wLevel - w) < Math.abs(widthThresholds[bestIdx] - w)
+          ? i
+          : bestIdx,
+      0
+    );
+    return `${heightLevels[idx]}p`;
+  }
+
+  // Single dimension (e.g. height extracted from a "Np" string): use height thresholds.
+  const ref = w ?? h!;
+  const closest = heightLevels.reduce((prev, curr) =>
+    Math.abs(curr - ref) < Math.abs(prev - ref) ? curr : prev
   );
-
   return `${closest}p`;
 }
 
@@ -294,7 +258,7 @@ export function normaliseParsedMediaInfo(
   if (parsedMediaInfo.resolution) {
     const match = parsedMediaInfo.resolution.toLowerCase().match(/(\d+)p/);
     resolution = match
-      ? normaliseResolution(Number.parseInt(match[1], 10), undefined)
+      ? normaliseResolution(undefined, Number.parseInt(match[1], 10))
       : undefined;
   }
 
@@ -310,6 +274,7 @@ export function normaliseParsedMediaInfo(
       ? { duration: parsedMediaInfo.duration }
       : {}),
     ...(parsedMediaInfo?.bitrate ? { bitrate: parsedMediaInfo.bitrate } : {}),
+    ...(parsedMediaInfo?.hasChapters ? { hasChapters: true } : {}),
   };
 
   return Object.keys(result).length > 0 ? result : undefined;
@@ -325,10 +290,10 @@ export function parseMediaInfo(
   const subtitleTracks = Array.isArray(info.subtitle) ? info.subtitle : [];
 
   const languages = normaliseLanguageList(
-    audioTracks.map((track) => track.lang)
+    audioTracks.map((track) => resolveTrackLang(track.lang, track.title))
   );
   const subtitles = normaliseLanguageList(
-    subtitleTracks.map((track) => track.lang)
+    subtitleTracks.map((track) => resolveTrackLang(track.lang, track.title))
   );
 
   const audioTags = [
@@ -349,7 +314,7 @@ export function parseMediaInfo(
 
   const visualTags = normaliseVisualTags(info.video);
   const encode = normaliseEncode(info.video);
-  const resolution = normaliseResolution(info.video?.h, info.video?.w);
+  const resolution = normaliseResolution(info.video?.w, info.video?.h);
   const duration =
     typeof info.format?.dur === 'number' &&
     Number.isFinite(info.format.dur) &&
@@ -364,7 +329,7 @@ export function parseMediaInfo(
       ? info.format.br
       : undefined;
 
-  return normaliseParsedMediaInfo({
+  const normalised = normaliseParsedMediaInfo({
     languages,
     subtitles,
     audioTags,
@@ -374,7 +339,10 @@ export function parseMediaInfo(
     resolution,
     duration,
     bitrate,
+    hasChapters: info.has_chapters === true,
   });
+
+  return normalised;
 }
 
 export function mergeParsedMediaInfo(
@@ -396,6 +364,7 @@ export function mergeParsedMediaInfo(
     resolution: preferred?.resolution ?? base?.resolution,
     duration: preferred?.duration ?? base?.duration,
     bitrate: preferred?.bitrate ?? base?.bitrate,
+    hasChapters: preferred?.hasChapters ?? base?.hasChapters,
   });
 
   return merged;

@@ -164,14 +164,15 @@ class StreamPrecomputer {
 
     const selector = new StreamSelector(context.toExpressionContext());
 
-    // Initialize all streams with a score of 0
-    const streamScores = new Map<string, number>();
-    const streamExpressionNames = new Map<string, string[]>();
+    // initialise each stream's score and match list, and build an id -> stream
+    // map so we can resolve back to original references after selector.select()
+    const streamsById = new Map<string, ParsedStream>();
     for (const stream of streams) {
-      streamScores.set(stream.id, 0);
+      stream.streamExpressionScore = 0;
+      stream.rankedStreamExpressionsMatched = [];
+      streamsById.set(stream.id, stream);
     }
 
-    // Evaluate each ranked expression and accumulate scores
     for (const { expression, score, enabled } of this.userData
       .rankedStreamExpressions) {
       if (enabled === false) {
@@ -180,18 +181,18 @@ class StreamPrecomputer {
 
       try {
         const selectedStreams = await selector.select(streams, expression);
+        const exprNames = extractNamesFromExpression(expression);
 
-        // Add the score to each matched stream
-        for (const stream of selectedStreams) {
-          const currentScore = streamScores.get(stream.id) ?? 0;
-          streamScores.set(stream.id, currentScore + score);
-          const exprNames = extractNamesFromExpression(expression);
+        for (const selected of selectedStreams) {
+          const stream = streamsById.get(selected.id);
+          if (!stream) continue;
+          stream.streamExpressionScore =
+            (stream.streamExpressionScore ?? 0) + score;
           if (exprNames) {
-            const existingNames = streamExpressionNames.get(stream.id) || [];
-            streamExpressionNames.set(stream.id, [
-              ...existingNames,
+            stream.rankedStreamExpressionsMatched = [
+              ...(stream.rankedStreamExpressionsMatched ?? []),
               ...exprNames,
-            ]);
+            ];
           }
         }
       } catch (error) {
@@ -201,14 +202,6 @@ class StreamPrecomputer {
           }`
         );
       }
-    }
-
-    // Apply the computed scores to the streams
-    for (const stream of streams) {
-      stream.streamExpressionScore = streamScores.get(stream.id) ?? 0;
-      stream.rankedStreamExpressionsMatched = streamExpressionNames.get(
-        stream.id
-      );
     }
 
     const nonZeroScores = streams.filter(
@@ -248,7 +241,10 @@ class StreamPrecomputer {
       const matched: string[] = [];
       let totalScore = 0;
       for (const { regex, pattern, name, score } of regexes) {
-        if (regex.test(stream.filename)) {
+        if (
+          regex.test(stream.filename) ||
+          (stream.folderName && regex.test(stream.folderName))
+        ) {
           if (name) matched.push(name);
           totalScore += score;
         }

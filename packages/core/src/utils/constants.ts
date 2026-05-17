@@ -8,6 +8,8 @@ export enum ErrorCode {
   USER_NEW_PASSWORD_TOO_SHORT = 'USER_NEW_PASSWORD_TOO_SHORT',
   USER_NEW_PASSWORD_TOO_SIMPLE = 'USER_NEW_PASSWORD_TOO_SIMPLE',
   ADDON_PASSWORD_INVALID = 'ADDON_PASSWORD_INVALID',
+  PARENT_CONFIG_SELF_REFERENCE = 'PARENT_CONFIG_SELF_REFERENCE',
+  PARENT_CONFIG_UNAVAILABLE = 'PARENT_CONFIG_UNAVAILABLE',
   // Database
   DATABASE_ERROR = 'DATABASE_ERROR',
   // Encryption
@@ -59,6 +61,14 @@ export const ErrorMap: Record<ErrorCode, ErrorDetails> = {
   [ErrorCode.ADDON_PASSWORD_INVALID]: {
     statusCode: 401,
     message: 'Invalid addon password',
+  },
+  [ErrorCode.PARENT_CONFIG_SELF_REFERENCE]: {
+    statusCode: 400,
+    message: 'A config cannot inherit from itself',
+  },
+  [ErrorCode.PARENT_CONFIG_UNAVAILABLE]: {
+    statusCode: 400,
+    message: 'The parent config could not be loaded',
   },
   [ErrorCode.DATABASE_ERROR]: {
     statusCode: 500,
@@ -183,7 +193,7 @@ export const FORMATTER_DETAILS: Record<FormatterType, FormatterDetail> = {
     id: TAMTARO_FORMATTER,
     name: 'Tamtaro',
     description:
-      "From Tamtaro's setup. Minimal and clean, yet comprehensive for stream selection. Smartly detects status for cached (⚡/⏳), proxied (⛊/⛉), library (☁︎/▤), and season packs (⧉/◧). The last line in sᴍᴀʟʟ ᴄᴀᴘs highlights special attributes like Usenet's health (☑ ɴᴢʙ), SeaDex (ᴀʟᴛ/ʙᴇsᴛ ʀᴇʟᴇᴀsᴇ), SEL scores (ʀᴇᴍᴜx ᴛ𝟷 ₁,₉₅₀), networks (ɴᴇᴛғʟɪx) and special editions (ᴅɪʀᴇᴄᴛᴏʀ's ᴄᴜᴛ).",
+      "From Tamtaro's setup. Smartly detects status for cached (⚡/⏳), proxied (⛊/⛉), library (☁︎/✎), season packs (❖/◈) and HDR/DV (✦/✧). The last line in sᴍᴀʟʟ ᴄᴀᴘs displays your preferred language options, Usenet's health (☑ ɴᴢʙ), SeaDex (ᴀʟᴛ/ʙᴇsᴛ ʀᴇʟᴇᴀsᴇ), networks, special editions and attributes via ranked stream expressions.",
   },
   [LIGHT_GDRIVE_FORMATTER]: {
     id: LIGHT_GDRIVE_FORMATTER,
@@ -797,9 +807,9 @@ const TOP_LEVEL_OPTION_DETAILS: Record<
       'Get your free API key from [here](https://ratingposterdb.com/api-key/) for posters with ratings.',
   },
   topPosterApiKey: {
-    name: 'Top Poster API Key',
+    name: 'TOP Posters API Key',
     description:
-      'Get your free API key from [here](https://api.top-streaming.stream/user/register) for posters with ratings.',
+      'Get your free API key from [here](https://api.top-posters.com/user/register) for posters with ratings.',
   },
   tvdbApiKey: {
     name: 'TVDB API Key',
@@ -982,6 +992,7 @@ const AUDIO_CHANNELS = ['2.0', '5.1', '6.1', '7.1', 'Unknown'] as const;
 const PASSTHROUGH_STAGES = [
   'filter', // bypass main filtering (shouldKeepStream)
   'language', // bypass language filtering specifically
+  'subtitle', // bypass subtitle filtering specifically
   'dedup', // bypass deduplication
   'limit', // bypass result limiting
   'excluded', // bypass excluded stream expressions
@@ -1007,6 +1018,7 @@ const SORT_CRITERIA = [
   'quality',
   'resolution',
   'language',
+  'subtitle',
   'visualTag',
   'audioTag',
   'audioChannel',
@@ -1084,6 +1096,15 @@ export const SORT_CRITERIA_DETAILS: Record<
       'Streams that are not in your preferred language list are preferred',
     descendingDescription:
       'Streams that are in your preferred language list are preferred',
+  },
+  subtitle: {
+    name: 'Subtitle',
+    description: 'Sort by the subtitle of the stream',
+    defaultDirection: 'desc',
+    ascendingDescription:
+      'Streams that are not in your preferred subtitle list are preferred',
+    descendingDescription:
+      'Streams that are in your preferred subtitle list are preferred',
   },
   visualTag: {
     name: 'Visual Tag',
@@ -1362,6 +1383,7 @@ const LANGUAGES = [
   'Russian',
   'Arabic',
   'Portuguese',
+  'Portuguese (Brazil)',
   'Spanish',
   'French',
   'German',

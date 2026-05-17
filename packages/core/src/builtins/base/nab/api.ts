@@ -7,6 +7,7 @@ import {
   getTimeTakenSincePoint,
   createLogger,
   makeRequest,
+  makeUrlLogSafe,
 } from '../../../utils/index.js';
 import { Parser } from 'xml2js';
 import { Logger } from 'winston';
@@ -127,14 +128,18 @@ const createTorznabItemSchema = () =>
         .array(AttributeSchema)
         .optional()
         .transform(
-          (arr) => arr?.reduce((acc, attr) => {
-            for (const key in attr) {
-              acc[key] = acc[key] && typeof acc[key] === 'string' && typeof attr[key] === 'string'
-                ? acc[key] + ',' + attr[key]
-                : attr[key];
-            }
-            return acc;
-          }, {}) ?? {}
+          (arr) =>
+            arr?.reduce((acc, attr) => {
+              for (const key in attr) {
+                acc[key] =
+                  acc[key] &&
+                  typeof acc[key] === 'string' &&
+                  typeof attr[key] === 'string'
+                    ? acc[key] + ',' + attr[key]
+                    : attr[key];
+              }
+              return acc;
+            }, {}) ?? {}
         ),
     })
     .transform((item) => ({
@@ -435,7 +440,9 @@ export class BaseNabApi<N extends 'torznab' | 'newznab'> {
     url.search = searchParams.toString();
     const urlString = url.toString();
 
-    this.logger.info(`Making ${this.namespace} request to: ${urlString}`);
+    this.logger.info(
+      `Making ${this.namespace} request to: ${makeUrlLogSafe(urlString)}`
+    );
 
     try {
       const response = await makeRequest(urlString, {
@@ -475,7 +482,7 @@ export class BaseNabApi<N extends 'torznab' | 'newznab'> {
 
       const parsedResult = schema.parse(result);
       this.logger.debug(
-        `Completed ${this.namespace} request for ${urlString} in ${getTimeTakenSincePoint(start)}`
+        `Completed ${this.namespace} request for ${makeUrlLogSafe(urlString)} in ${getTimeTakenSincePoint(start)}`
       );
       return parsedResult;
     } catch (error) {

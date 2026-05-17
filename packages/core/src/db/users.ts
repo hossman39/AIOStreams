@@ -13,6 +13,7 @@ import {
   verifyHash,
   validateConfig,
   applyMigrations,
+  mergeConfigs,
 } from '../utils/index.js';
 
 const APIError = constants.APIError;
@@ -42,10 +43,35 @@ export class UserRepository {
       }
       config.trusted = false;
       config.ip = undefined;
+
+      let configToValidate: UserData = config;
+      if (config.parentConfig?.uuid) {
+        let parent: UserData;
+        try {
+          const rawParent = await this.getRawUser(
+            config.parentConfig.uuid,
+            config.parentConfig.password
+          );
+          if (!rawParent) throw new Error('Parent config not found');
+          parent = rawParent;
+        } catch (error) {
+          return Promise.reject(
+            new APIError(
+              constants.ErrorCode.PARENT_CONFIG_UNAVAILABLE,
+              undefined,
+              error instanceof APIError ? error.message : String(error)
+            )
+          );
+        }
+        const merged = mergeConfigs(parent, config);
+        merged.trusted = parent.trusted || config.trusted;
+        configToValidate = merged;
+      }
+
       try {
         // don't skip errors, but don't decrypt credentials
         // as we need to store the encrypted version
-        validatedConfig = await validateConfig(config, {
+        validatedConfig = await validateConfig(configToValidate, {
           skipErrorsFromAddonsOrProxies: false,
           decryptValues: false,
           // when creating a user, time isnt a concern
@@ -66,8 +92,10 @@ export class UserRepository {
 
       const uuid = await this.generateUUID();
 
+      // If a parent config was merged for validation, save the child's own config.
+      // Mutations from validateConfig (forced credentials, proxy) are re-applied at stream time.
       const { encryptedConfig, salt: configSalt } = await this.encryptConfig(
-        validatedConfig,
+        config.parentConfig?.uuid ? config : validatedConfig,
         password
       );
       const hashedPassword = await getTextHash(password);
@@ -124,26 +152,117 @@ export class UserRepository {
   // with api use, we are given the password
   // GET /user should also return
 
+  static async getRawUser(
+    uuid: string,
+    password: string
+  ): Promise<UserData | null> {
+    try {
+      const config = await this.loadRawUser(uuid, password);
+      logger.info(`Retrieved raw configuration for user ${uuid}`);
+      return config;
+    } catch (error) {
+      if (error instanceof APIError) return Promise.reject(error);
+      logger.error(
+        `Error retrieving user ${uuid}: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return Promise.reject(new APIError(constants.ErrorCode.DATABASE_ERROR));
+    }
+  }
+
   static async getUser(
     uuid: string,
     password: string
   ): Promise<UserData | null> {
     try {
+      let config = await this.loadRawUser(uuid, password);
+
+      if (config.parentConfig?.uuid) {
+        try {
+          const parent = await this.loadRawUser(
+            config.parentConfig.uuid,
+            config.parentConfig.password
+          );
+          config = mergeConfigs(parent, config);
+          logger.info(
+            `Merged parent config ${config.parentConfig!.uuid} for user ${uuid}`
+          );
+        } catch (e) {
+          logger.warn(
+            `Could not load parent config ${config.parentConfig!.uuid} for user ${uuid}: ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+      }
+
+      logger.info(`Retrieved configuration for user ${uuid}`);
+      return config;
+    } catch (error) {
+      if (error instanceof APIError) return Promise.reject(error);
+      logger.error(
+        `Error retrieving user ${uuid}: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return Promise.reject(new APIError(constants.ErrorCode.DATABASE_ERROR));
+    }
+  }
+
+  private static async loadRawUser(
+    uuid: string,
+    password: string
+  ): Promise<UserData> {
+    const result = await db.query(
+      'SELECT config, config_salt, password_hash FROM users WHERE uuid = ?',
+      [uuid]
+    );
+
+    if (!result.length || !result[0].config) {
+      return Promise.reject(
+        new APIError(constants.ErrorCode.USER_INVALID_DETAILS)
+      );
+    }
+
+    await db.execute(
+      'UPDATE users SET accessed_at = CURRENT_TIMESTAMP WHERE uuid = ?',
+      [uuid]
+    );
+
+    const isValid = await this.verifyUserPassword(
+      password,
+      result[0].password_hash
+    );
+    if (!isValid) {
+      return Promise.reject(
+        new APIError(constants.ErrorCode.USER_INVALID_DETAILS)
+      );
+    }
+
+    const decryptedConfig = await this.decryptConfig(
+      result[0].config,
+      password,
+      result[0].config_salt
+    );
+
+    decryptedConfig.trusted =
+      Env.TRUSTED_UUIDS?.split(',').some((u) => new RegExp(u).test(uuid)) ??
+      false;
+    decryptedConfig.uuid = uuid;
+    decryptedConfig.ip = undefined;
+    return applyMigrations(decryptedConfig);
+  }
+
+  static async verifyUser(
+    uuid: string,
+    password: string
+  ): Promise<{ createdAt: string }> {
+    try {
       const result = await db.query(
-        'SELECT config, config_salt, password_hash FROM users WHERE uuid = ?',
+        'SELECT password_hash, created_at FROM users WHERE uuid = ?',
         [uuid]
       );
 
-      if (!result.length || !result[0].config) {
+      if (!result.length) {
         return Promise.reject(
           new APIError(constants.ErrorCode.USER_INVALID_DETAILS)
         );
       }
-
-      await db.execute(
-        'UPDATE users SET accessed_at = CURRENT_TIMESTAMP WHERE uuid = ?',
-        [uuid]
-      );
 
       const isValid = await this.verifyUserPassword(
         password,
@@ -155,49 +274,11 @@ export class UserRepository {
         );
       }
 
-      const decryptedConfig = await this.decryptConfig(
-        result[0].config,
-        password,
-        result[0].config_salt
-      );
-
-      // try {
-      //   // skip errors, and dont decrypt credentials either, as this would make
-      //   // encryption pointless
-      //   validatedConfig = await validateConfig(decryptedConfig, true, false);
-      // } catch (error: any) {
-      //   return Promise.reject(
-      //     new APIError(
-      //       constants.ErrorCode.USER_INVALID_CONFIG,
-      //       undefined,
-      //       error.message
-      //     )
-      //   );
-      // }
-      // const {
-      //   success,
-      //   data: validatedConfig,
-      //   error,
-      // } = UserDataSchema.safeParse(decryptedConfig);
-      // if (!success) {
-      //   return Promise.reject(
-      //     new APIError(
-      //       constants.ErrorCode.USER_INVALID_CONFIG,
-      //       undefined,
-      //       formatZodError(error)
-      //     )
-      //   );
-      // }
-      decryptedConfig.trusted =
-        Env.TRUSTED_UUIDS?.split(',').some((u) => new RegExp(u).test(uuid)) ??
-        false;
-      decryptedConfig.uuid = uuid;
-      decryptedConfig.ip = undefined;
-      logger.info(`Retrieved configuration for user ${uuid}`);
-      return applyMigrations(decryptedConfig);
+      return { createdAt: result[0].created_at };
     } catch (error) {
+      if (error instanceof APIError) return Promise.reject(error);
       logger.error(
-        `Error retrieving user ${uuid}: ${error instanceof Error ? error.message : String(error)}`
+        `Error verifying user ${uuid}: ${error instanceof Error ? error.message : String(error)}`
       );
       return Promise.reject(new APIError(constants.ErrorCode.DATABASE_ERROR));
     }
@@ -222,6 +303,10 @@ export class UserRepository {
           throw new APIError(constants.ErrorCode.USER_INVALID_DETAILS);
         }
 
+        if (config.parentConfig?.uuid === uuid) {
+          throw new APIError(constants.ErrorCode.PARENT_CONFIG_SELF_REFERENCE);
+        }
+
         if (
           Env.ADDON_PASSWORD.length > 0 &&
           !Env.ADDON_PASSWORD.includes(config.addonPassword || '')
@@ -232,9 +317,24 @@ export class UserRepository {
           Env.TRUSTED_UUIDS?.split(',').some((u) => new RegExp(u).test(uuid)) ??
           false;
         config.ip = undefined;
+
+        let configToValidate: UserData = config;
+        if (config.parentConfig?.uuid) {
+          const rawParent = await this.getRawUser(
+            config.parentConfig.uuid,
+            config.parentConfig.password
+          );
+          if (!rawParent) {
+            throw new APIError(constants.ErrorCode.PARENT_CONFIG_UNAVAILABLE);
+          }
+          const merged = mergeConfigs(rawParent, config);
+          merged.trusted = rawParent.trusted || config.trusted;
+          configToValidate = merged;
+        }
+
         let validatedConfig: UserData;
         try {
-          validatedConfig = await validateConfig(config, {
+          validatedConfig = await validateConfig(configToValidate, {
             skipErrorsFromAddonsOrProxies: false,
             decryptValues: false,
             // when updating a user, time isnt a concern
@@ -254,8 +354,10 @@ export class UserRepository {
         if (!isValid) {
           throw new APIError(constants.ErrorCode.USER_INVALID_DETAILS);
         }
+        // If a parent config was merged for validation, save the child's own config.
+        // Mutations from validateConfig (forced credentials, proxy) are re-applied at stream time.
         const { encryptedConfig } = await this.encryptConfig(
-          validatedConfig,
+          config.parentConfig?.uuid ? config : validatedConfig,
           password,
           currentUser.rows[0].config_salt
         );
@@ -452,7 +554,12 @@ export class UserRepository {
 
         const userRow = userResult.rows[0];
 
-        if (!(await this.verifyUserPassword(currentPassword, userRow.password_hash))) {
+        if (
+          !(await this.verifyUserPassword(
+            currentPassword,
+            userRow.password_hash
+          ))
+        ) {
           throw new APIError(constants.ErrorCode.USER_INVALID_DETAILS);
         }
 
@@ -470,14 +577,13 @@ export class UserRepository {
           userRow.config_salt
         );
 
-        const { encryptedConfig, salt: newConfigSalt } = await this.encryptConfig(
-          currentConfig,
-          newPassword
-        );
+        const { encryptedConfig, salt: newConfigSalt } =
+          await this.encryptConfig(currentConfig, newPassword);
 
         const newPasswordHash = await getTextHash(newPassword);
 
-        const { success, data: newEncryptedPasswordToken } = encryptString(newPassword);
+        const { success, data: newEncryptedPasswordToken } =
+          encryptString(newPassword);
         if (!success) {
           throw new APIError(constants.ErrorCode.ENCRYPTION_ERROR);
         }
@@ -492,7 +598,6 @@ export class UserRepository {
         logger.info(`Changed password for user ${uuid}`);
 
         return { encryptedPassword: newEncryptedPasswordToken };
-
       } catch (error) {
         logger.error(
           `Failed to change password for user ${uuid}: ${error instanceof Error ? error.message : String(error)}`

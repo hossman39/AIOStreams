@@ -609,9 +609,17 @@ export const Env = cleanEnv(process.env, {
     default: undefined,
     desc: 'Comma separated list of disabled addons in format of addon:reason',
   }),
+  REMOVED_ADDONS: str({
+    default: undefined,
+    desc: 'Comma separated list of removed addons in format of addon:reason — hidden from marketplace and errors on save',
+  }),
   DISABLED_SERVICES: str({
     default: undefined,
     desc: 'Comma separated list of disabled services in format of service:reason',
+  }),
+  DISABLED_STREAM_TYPES: commaSeparated({
+    default: undefined,
+    desc: 'Comma separated list of stream types that should never be returned to clients (e.g., p2p,http,live).',
   }),
   REGEX_FILTER_ACCESS: str({
     default: 'trusted',
@@ -1134,7 +1142,16 @@ export const Env = cleanEnv(process.env, {
     desc: 'Encrypt StremThru URLs',
   }),
 
-  // service settings
+  // unified service credentials
+  DEFAULT_SERVICE_CREDENTIALS: str({
+    default: undefined,
+    desc: 'Default credentials for services. Format: one "serviceId.credentialId=value" per line. Values may contain any characters including commas and equals signs.',
+  }),
+  FORCED_SERVICE_CREDENTIALS: str({
+    default: undefined,
+    desc: 'Forced credentials for services (overrides user settings). Same format as DEFAULT_SERVICE_CREDENTIALS.',
+  }),
+
   DEFAULT_REALDEBRID_API_KEY: str({
     default: undefined,
     desc: 'Default RealDebrid API key',
@@ -1390,8 +1407,8 @@ export const Env = cleanEnv(process.env, {
   }),
 
   // Torrentio settings
-  TORRENTIO_URL: url({
-    default: 'https://torrentio.strem.fun',
+  TORRENTIO_URL: urlOrUrlList({
+    default: ['https://torrentio.strem.fun'],
     desc: 'Torrentio URL',
   }),
   DEFAULT_TORRENTIO_TIMEOUT: num({
@@ -1828,6 +1845,32 @@ export const Env = cleanEnv(process.env, {
     desc: 'Default WebStreamr user agent',
   }),
 
+  HDHUB_URL: url({
+    default: 'https://hdhub.thevolecitor.qzz.io',
+    desc: 'Base URL for the HdHub Stremio Addon',
+  }),
+  DEFAULT_HDHUB_TIMEOUT: num({
+    default: undefined,
+    desc: 'Default timeout for the HdHub Stremio Addon',
+  }),
+  DEFAULT_HDHUB_USER_AGENT: userAgent({
+    default: undefined,
+    desc: 'Default user agent for the HdHub Stremio Addon',
+  }),
+
+  BAGUETTIO_URL: url({
+    default: 'https://baguettio.org',
+    desc: 'Default Baguettio URL',
+  }),
+  DEFAULT_BAGUETTIO_TIMEOUT: num({
+    default: undefined,
+    desc: 'Default Baguettio timeout',
+  }),
+  DEFAULT_BAGUETTIO_USER_AGENT: userAgent({
+    default: undefined,
+    desc: 'Default Baguettio user agent',
+  }),
+
   TMDB_ADDON_URL: url({
     default: 'https://tmdb.elfhosted.com',
     desc: 'TMDB Addon URL',
@@ -1946,6 +1989,19 @@ export const Env = cleanEnv(process.env, {
     desc: 'Default AI Search user agent',
   }),
 
+  FLIX_STREAMS_URL: url({
+    default: 'https://flixnest.app/flix-streams',
+    desc: 'Flix-Streams URL',
+  }),
+  DEFAULT_FLIX_STREAMS_TIMEOUT: num({
+    default: 10000,
+    desc: 'Default Flix-Streams timeout',
+  }),
+  DEFAULT_FLIX_STREAMS_USER_AGENT: userAgent({
+    default: undefined,
+    desc: 'Default Flix-Streams user agent',
+  }),
+
   FKSTREAM_URL: url({
     default: 'https://streamio.fankai.fr',
     desc: 'FKStream URL',
@@ -1983,6 +2039,19 @@ export const Env = cleanEnv(process.env, {
   DEFAULT_SUBHERO_USER_AGENT: userAgent({
     default: undefined,
     desc: 'Default SubHero user agent',
+  }),
+
+  YASTREAM_URL: url({
+    default: 'https://yastream.tamthai.de',
+    desc: 'yastream URL',
+  }),
+  DEFAULT_YASTREAM_TIMEOUT: num({
+    default: undefined,
+    desc: 'Default yastream timeout',
+  }),
+  DEFAULT_YASTREAM_USER_AGENT: userAgent({
+    default: undefined,
+    desc: 'Default yastream user agent',
   }),
 
   STREAMASIA_URL: url({
@@ -2394,7 +2463,7 @@ export const Env = cleanEnv(process.env, {
   }),
 
   BUILTIN_TORRENT_GALAXY_URL: url({
-    default: 'https://torrentgalaxy.space',
+    default: 'https://torrentgalaxy.one',
     desc: 'Builtin Torrent Galaxy URL',
   }),
   BUILTIN_DEFAULT_TORRENT_GALAXY_TIMEOUT: num({

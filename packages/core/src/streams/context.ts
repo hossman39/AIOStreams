@@ -14,7 +14,7 @@ import {
 } from '../utils/index.js';
 import { SeaDexResult } from '../utils/seadex.js';
 import { calculateAbsoluteEpisode } from '../builtins/utils/general.js';
-import { iso6391ToLanguage } from '../formatters/utils.js';
+import { iso6391ToLanguage } from '../utils/languages.js';
 
 const logger = createLogger('stream-context');
 
@@ -249,6 +249,16 @@ export class StreamContext {
               ).length;
             if (nonImdbEpisodesBefore > 0) {
               absoluteEpisode += nonImdbEpisodesBefore;
+            }
+
+            if (relativeAbsoluteEpisode) {
+              const nonImdbEpisodesBeforeRelative =
+                this.animeEntry.imdb.nonImdbEpisodes.filter(
+                  (ep: number) => ep < relativeAbsoluteEpisode!
+                ).length;
+              if (nonImdbEpisodesBeforeRelative > 0) {
+                relativeAbsoluteEpisode += nonImdbEpisodesBeforeRelative;
+              }
             }
           }
         }

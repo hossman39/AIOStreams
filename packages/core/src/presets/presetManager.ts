@@ -44,8 +44,10 @@ import { SubSourcePreset } from './subsource.js';
 import { SubDLPreset } from './subdl.js';
 import { AISearchPreset } from './aiSearch.js';
 import { FKStreamPreset } from './fkstream.js';
+import { FlixStreamsPreset } from './flixStreams.js';
 import { AIOSubtitlePreset } from './aiosubtitle.js';
 import { SubHeroPreset } from './subhero.js';
+import { YastreamPreset } from './yastream.js';
 import { StreamAsiaPreset } from './streamasia.js';
 import { MoreLikeThisPreset } from './moreLikeThis.js';
 import { GDriveAPI } from '../builtins/gdrive/index.js';
@@ -75,6 +77,8 @@ import { NekoBtPreset } from './nekoBt.js';
 import { EasynewsSearchPreset } from './easynewsSearch.js';
 import { SeaDexPreset } from './seadex.js';
 import { StreamNZBPreset } from './streamnzb.js';
+import { HdHubPreset } from './hdhub.js';
+import { BaguettioPreset } from './baguettio.js';
 import { Preset } from './index.js';
 
 let PRESET_LIST: string[] = [
@@ -107,6 +111,7 @@ let PRESET_LIST: string[] = [
   'orion',
   'torrents-db',
   'streamfusion',
+  'baguettio',
   'fkstream',
   'debridio',
   'torbox',
@@ -120,8 +125,11 @@ let PRESET_LIST: string[] = [
   'dmm-cast',
   'nuvio-streams',
   'webstreamr',
+  'hdhub',
+  'flix-streams',
   'astream',
   'brazuca-torrents',
+  'yastream',
   'streamasia',
   'usa-tv',
   'argentina-tv',
@@ -226,6 +234,8 @@ export class PresetManager {
         return StreamFusionPreset;
       case 'fkstream':
         return FKStreamPreset;
+      case 'flix-streams':
+        return FlixStreamsPreset;
       case 'anime-kitsu':
         return AnimeKitsuPreset;
       case 'nuvio-streams':
@@ -272,6 +282,8 @@ export class PresetManager {
         return AIOSubtitlePreset;
       case 'subhero':
         return SubHeroPreset;
+      case 'yastream':
+        return YastreamPreset;
       case 'streamasia':
         return StreamAsiaPreset;
       case 'more-like-this':
@@ -320,6 +332,10 @@ export class PresetManager {
         return EasynewsSearchPreset;
       case 'streamnzb':
         return StreamNZBPreset;
+      case 'hdhub':
+        return HdHubPreset;
+      case 'baguettio':
+        return BaguettioPreset;
       default:
         throw new Error(`Preset ${id} not found`);
     }
